@@ -1,0 +1,39 @@
+---
+source: tests/cli.rs
+assertion_line: 45
+expression: stdout
+---
+{
+  "version": 1,
+  "root": "<repo>/tests/fixtures/console_app",
+  "summary": {
+    "projects": 1,
+    "filesScanned": 4,
+    "symbols": 14,
+    "unusedTypes": 0,
+    "unusedMembers": 1,
+    "unusedFiles": 1,
+    "elapsedMs": 0
+  },
+  "notes": [],
+  "findings": [
+    {
+      "kind": "unused-file",
+      "name": "ConsoleApp/DeadClass.cs",
+      "project": "ConsoleApp",
+      "file": "ConsoleApp/DeadClass.cs",
+      "line": 1,
+      "column": 1
+    },
+    {
+      "kind": "unused-member",
+      "symbolKind": "method",
+      "name": "ConsoleApp.ConsoleGreeter.UnusedHelper",
+      "project": "ConsoleApp",
+      "file": "ConsoleApp/ConsoleGreeter.cs",
+      "line": 15,
+      "column": 20,
+      "visibility": "private"
+    }
+  ]
+}

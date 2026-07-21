@@ -1,0 +1,12 @@
+---
+source: tests/cli.rs
+assertion_line: 30
+expression: normalize(&output.stdout)
+---
+ConsoleApp/DeadClass.cs (ConsoleApp)
+      1:1  dead file      every declaration in this file is unused
+
+ConsoleApp/ConsoleGreeter.cs (ConsoleApp)
+    15:20  unused member  ConsoleApp.ConsoleGreeter.UnusedHelper (private method)
+
+found 1 dead file · 0 unused types · 1 unused member — 1 project(s), 4 file(s), 14 symbol(s) scanned in <n> ms
