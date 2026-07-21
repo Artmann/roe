@@ -78,3 +78,81 @@ fn sln_path_argument_is_accepted() {
         .expect("command runs");
     assert_eq!(output.status.code(), Some(1));
 }
+
+#[test]
+fn config_ignore_json_filters_out_ignored_folder() {
+    let output = roe()
+        .args(["dead-code", &fixture("config_ignore_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("StillDead.cs"));
+    assert!(!stdout.contains("Ignored"));
+}
+
+#[test]
+fn config_ignore_yaml_filters_out_ignored_folder() {
+    let output = roe()
+        .args(["dead-code", &fixture("config_ignore_yaml")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("StillDead.cs"));
+    assert!(!stdout.contains("Ignored"));
+}
+
+#[test]
+fn config_resolution_walks_up_to_parent_directory() {
+    // roe.json lives at the fixture root; --path points at a nested
+    // subdirectory, so the ignore glob (relative to the config file's own
+    // directory) must still resolve correctly against files under it.
+    let output = roe()
+        .args(["dead-code", &format!("{}/Sub", fixture("config_nested"))])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("StillDead.cs"));
+    assert!(!stdout.contains("Ignored"));
+}
+
+#[test]
+fn config_aggressive_true_takes_effect_without_cli_flag() {
+    let output = roe()
+        .args(["dead-code", &fixture("config_aggressive")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Legacy"));
+}
+
+#[test]
+fn explicit_config_flag_overrides_auto_discovery() {
+    let fixture_root = fixture("config_explicit");
+    let output = roe()
+        .args([
+            "dead-code",
+            &format!("{fixture_root}/code"),
+            "--config",
+            &format!("{fixture_root}/config/roe.json"),
+        ])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Legacy"));
+}
+
+#[test]
+fn malformed_config_exits_2() {
+    let output = roe()
+        .args(["dead-code", &fixture("config_malformed")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error:"));
+}

@@ -23,6 +23,7 @@ roe dead-code [PATH]            # directory, .sln, or .csproj (default: cwd)
 roe dead-code --format json     # machine-readable, stable v1 schema
 roe dead-code --aggressive      # also flag enum members + public auto-properties
 roe dead-code --root App.Foo    # treat a symbol as an entry point
+roe dead-code --config PATH     # use this roe.json/roe.yaml instead of auto-discovery
 ```
 
 Exit codes: `0` clean · `1` findings · `2` error.
@@ -71,6 +72,51 @@ interface implementations (invoked via dispatch), members satisfying an
 in-source interface, visible members of types implementing external
 `I`-prefixed interfaces, public auto-properties and enum members (serializer
 fodder — opt in with `--aggressive`), extension methods bypass type gating.
+
+## Suppressing findings
+
+Two mechanisms exist for marking a finding as a false positive, on top of the
+built-in kill list above.
+
+**Inline comments**, eslint-style, checked after the first `//` on a line (so
+`///` doc-comments match too):
+
+```csharp
+// roe-ignore-next-line unused-type
+internal class LegacyHelper { }
+
+public void DoWork()
+{
+    var unused = 1; // roe-ignore-line unused-member
+}
+```
+
+`roe-ignore-next-line` suppresses a finding on the line below the comment;
+`roe-ignore-line` suppresses one on the same line. Both take an optional
+comma-separated rule list (`unused-type`, `unused-member`, `unused-file` — the
+same kebab-case names used in JSON output); omitting it suppresses any finding
+kind on that line. Because a dead file's finding is pinned at line 1, an
+`unused-file` marker (or a bare marker) suppresses it from anywhere in the
+file.
+
+**A config file** — `roe.json`, `roe.yaml`, or `roe.yml` — resolved by
+walking up from the analysis root to the nearest directory containing one
+(like `.eslintrc`/`tsconfig.json`), or pointed to explicitly with `--config`:
+
+```json
+{
+  "aggressive": true,
+  "roots": ["MyApp.Program.Main"],
+  "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"]
+}
+```
+
+`ignore` is a list of glob patterns, resolved relative to the config file's
+own directory, that drop every finding in a matching file (a trailing `/`
+matches the whole directory, so `"Generated/"` needs no `**`). `aggressive`
+and `roots` set defaults for the matching CLI flags: an explicit `--aggressive`
+or `--root` always wins, otherwise the config's value applies, otherwise the
+built-in default (`false` / no extra roots).
 
 ## Known limitations
 

@@ -1,6 +1,7 @@
 pub mod analyze;
 pub mod cli;
 pub mod commands;
+pub mod config;
 pub mod discover;
 pub mod entry_points;
 pub mod extract;
@@ -9,6 +10,7 @@ pub mod model;
 pub mod report;
 pub mod resolve;
 pub mod rules;
+pub mod suppress;
 
 use std::process::ExitCode;
 

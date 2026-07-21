@@ -185,3 +185,20 @@ fn manual_roots_rescue_symbols() {
 fn nonexistent_path_errors() {
     assert!(analyze(&fixture("does_not_exist"), false, &[]).is_err());
 }
+
+#[test]
+fn inline_suppression_comments_filter_findings() {
+    // SuppressedType, BareSuppressed, TrailingSuppressed, and the wholly-dead
+    // WhollyDeadFile are all suppressed via inline comments. WrongRuleType is
+    // annotated with a rule name that doesn't match its actual finding kind,
+    // so it must still be reported (proves rule filtering isn't a no-op).
+    // TrulyDeadType and UnannotatedDead carry no comment at all.
+    assert_findings(
+        findings("inline_suppress", false),
+        vec![
+            ty("InlineSuppress.TrulyDeadType"),
+            ty("InlineSuppress.WrongRuleType"),
+            member("InlineSuppress.HelperHost.UnannotatedDead"),
+        ],
+    );
+}

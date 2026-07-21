@@ -2,12 +2,13 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
+use anyhow::Context;
 use lasso::ThreadedRodeo;
 
 use crate::cli::DeadCodeArgs;
 use crate::model::{AnalysisResult, SymbolId, Workspace};
 use crate::resolve::SymbolFlags;
-use crate::{analyze, discover, entry_points, extract, graph, report, resolve, rules};
+use crate::{analyze, config, discover, entry_points, extract, graph, report, resolve, rules, suppress};
 
 pub struct Analysis {
     pub workspace: Workspace,
@@ -15,11 +16,12 @@ pub struct Analysis {
 }
 
 /// The full dead-code pipeline: discover → extract → symbol table → kill
-/// list → entry points → graph → reachability → detectors.
+/// list → entry points → graph → reachability → detectors → inline
+/// suppressions.
 pub fn analyze(root: &Path, aggressive: bool, manual_roots: &[String]) -> anyhow::Result<Analysis> {
     let start = Instant::now();
 
-    let workspace = discover::discover(root)?;
+    let mut workspace = discover::discover(root)?;
     let rodeo = ThreadedRodeo::default();
     let facts = extract::extract_all(&workspace.files, &rodeo);
 
@@ -36,7 +38,7 @@ pub fn analyze(root: &Path, aggressive: bool, manual_roots: &[String]) -> anyhow
         .collect();
     let reachable = graph::mark_reachable(&resolution, &symbol_graph, roots.into_iter());
 
-    let result = analyze::find_dead(
+    let mut result = analyze::find_dead(
         &resolution,
         &reachable,
         &workspace,
@@ -44,6 +46,8 @@ pub fn analyze(root: &Path, aggressive: bool, manual_roots: &[String]) -> anyhow
         start.elapsed(),
         notes,
     );
+
+    suppress::apply_inline_suppressions(&mut result, &mut workspace);
 
     Ok(Analysis { workspace, result })
 }
@@ -54,7 +58,44 @@ pub fn run(args: &DeadCodeArgs) -> anyhow::Result<ExitCode> {
         None => std::env::current_dir()?,
     };
 
-    let analysis = analyze(&root, args.aggressive, &args.roots)?;
+    let mut config_warnings = Vec::new();
+    let resolved_config = match &args.config {
+        Some(path) => Some(config::load_explicit(path)?),
+        None => {
+            let canonical_root = std::fs::canonicalize(&root)
+                .with_context(|| format!("path not found: {}", root.display()))?;
+            let config_start = if canonical_root.is_dir() {
+                canonical_root
+            } else {
+                canonical_root
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or(canonical_root)
+            };
+            config::discover(&config_start, &mut config_warnings)?
+        }
+    };
+
+    let effective = config::merge(
+        resolved_config.as_ref().map(|r| &r.config),
+        args.aggressive,
+        &args.roots,
+    );
+
+    let mut analysis = analyze(&root, effective.aggressive, &effective.roots)?;
+    analysis.workspace.warnings.append(&mut config_warnings);
+
+    if let Some(resolved) = &resolved_config
+        && let Some(ignore) = &resolved.config.ignore
+    {
+        suppress::apply_config_ignores(
+            &mut analysis.result,
+            ignore,
+            &resolved.dir,
+            &mut analysis.workspace.warnings,
+        );
+    }
+
     for warning in &analysis.workspace.warnings {
         eprintln!("warning: {warning}");
     }

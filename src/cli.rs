@@ -32,6 +32,11 @@ pub struct DeadCodeArgs {
     /// Additional entry-point roots (fully-qualified symbol names)
     #[arg(long = "root", value_name = "FQN")]
     pub roots: Vec<String>,
+
+    /// Path to an explicit roe.json/roe.yaml/roe.yml config (skips
+    /// auto-discovery)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
