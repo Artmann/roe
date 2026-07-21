@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 
-fn cultivate() -> Command {
-    let mut cmd = Command::cargo_bin("cultivate").expect("binary builds");
+fn roe() -> Command {
+    let mut cmd = Command::cargo_bin("roe").expect("binary builds");
     cmd.env("NO_COLOR", "1");
     cmd
 }
@@ -22,7 +22,7 @@ fn normalize(output: &[u8]) -> String {
 
 #[test]
 fn findings_exit_code_1_and_human_output() {
-    let output = cultivate()
+    let output = roe()
         .args(["dead-code", &fixture("console_app")])
         .output()
         .expect("command runs");
@@ -32,7 +32,7 @@ fn findings_exit_code_1_and_human_output() {
 
 #[test]
 fn json_output_is_stable() {
-    let output = cultivate()
+    let output = roe()
         .args(["dead-code", &fixture("console_app"), "--format", "json"])
         .output()
         .expect("command runs");
@@ -47,7 +47,7 @@ fn json_output_is_stable() {
 
 #[test]
 fn clean_codebase_exits_0() {
-    let output = cultivate()
+    let output = roe()
         .args(["dead-code", &fixture("generated")])
         .output()
         .expect("command runs");
@@ -58,7 +58,7 @@ fn clean_codebase_exits_0() {
 
 #[test]
 fn invalid_path_exits_2() {
-    let output = cultivate()
+    let output = roe()
         .args(["dead-code", "/definitely/not/a/real/path"])
         .output()
         .expect("command runs");
@@ -69,7 +69,7 @@ fn invalid_path_exits_2() {
 
 #[test]
 fn sln_path_argument_is_accepted() {
-    let output = cultivate()
+    let output = roe()
         .args([
             "dead-code",
             &format!("{}/ConsoleApp.sln", fixture("console_app")),

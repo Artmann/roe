@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
-#[command(name = "cultivate", version, about = "Codebase intelligence for C#")]
+#[command(name = "roe", version, about = "Codebase intelligence for C#")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,

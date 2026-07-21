@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use cultivate::commands::dead_code::analyze;
-use cultivate::model::FindingKind;
+use roe::commands::dead_code::analyze;
+use roe::model::FindingKind;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

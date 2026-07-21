@@ -1,11 +1,11 @@
-# cultivate
+# roe
 
 Codebase intelligence for C#. Finds dead code — unused types, members, and
 files — by building a reference graph of your solution and mark-and-sweeping
 from its entry points.
 
 ```
-$ cultivate dead-code path/to/solution
+$ roe dead-code path/to/solution
 
 src/App/Services/LegacyExporter.cs (App)
       1:1  dead file      every declaration in this file is unused
@@ -19,10 +19,10 @@ found 1 dead file · 0 unused types · 1 unused member — 3 project(s), 214 fil
 ## Usage
 
 ```
-cultivate dead-code [PATH]            # directory, .sln, or .csproj (default: cwd)
-cultivate dead-code --format json     # machine-readable, stable v1 schema
-cultivate dead-code --aggressive      # also flag enum members + public auto-properties
-cultivate dead-code --root App.Foo    # treat a symbol as an entry point
+roe dead-code [PATH]            # directory, .sln, or .csproj (default: cwd)
+roe dead-code --format json     # machine-readable, stable v1 schema
+roe dead-code --aggressive      # also flag enum members + public auto-properties
+roe dead-code --root App.Foo    # treat a symbol as an entry point
 ```
 
 Exit codes: `0` clean · `1` findings · `2` error.
@@ -96,4 +96,4 @@ cargo run -- dead-code tests/fixtures/console_app
 
 Fixtures under `tests/fixtures/` are miniature solutions pinning the
 false-positive kill list; they are parsed, never compiled or executed.
-cultivate never runs the code it analyzes.
+roe never runs the code it analyzes.
