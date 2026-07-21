@@ -1,1 +1,8 @@
 /target
+
+# .NET build output inside C# test fixtures — never source, always regenerable
+bin/
+obj/
+
+# insta pending-review diffs
+*.snap.new
