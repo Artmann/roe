@@ -170,7 +170,7 @@ jobs:
       - name: Assemble package
         env:
           TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: node packaging/npm/prepare.js "${TAG#v}" binaries
+        run: node packaging/npm/prepare.js "${TAG#*v}" binaries
 
       - name: Publish roe-cli
         run: npm publish packaging/npm/build/roe-cli --access public
@@ -217,12 +217,12 @@ jobs:
           dotnet pack packaging/nuget/Roe.Tool.csproj \
             --configuration Release \
             --output packages \
-            "-p:Version=${TAG#v}"
+            "-p:Version=${TAG#*v}"
 
       - name: Push
         env:
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          dotnet nuget push "packages/roe.${TAG#v}.nupkg" \
+          dotnet nuget push "packages/roe.${TAG#*v}.nupkg" \
             --api-key "${{ secrets.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json
