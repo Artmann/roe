@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Codebase intelligence for C# — dead code and duplicate detection.</Description>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+    <PackAsTool>true</PackAsTool>
+    <PackageId>roe</PackageId>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Artmann/roe</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>csharp;dead-code;duplicates;static-analysis</PackageTags>
+    <RepositoryUrl>https://github.com/Artmann/roe</RepositoryUrl>
+    <RollForward>LatestMajor</RollForward>
+    <RootNamespace>Roe.Tool</RootNamespace>
+    <TargetFramework>net8.0</TargetFramework>
+    <ToolCommandName>roe</ToolCommandName>
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+
+  <!--
+    The Rust binaries are staged into binaries/<rid>/ by the release workflow
+    before `dotnet pack` runs; they are never checked in. Each entry is listed
+    explicitly so the package layout is deterministic.
+  -->
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="binaries/linux-arm64/*" Pack="true" PackagePath="tools/net8.0/any/binaries/linux-arm64/" />
+    <None Include="binaries/linux-x64/*" Pack="true" PackagePath="tools/net8.0/any/binaries/linux-x64/" />
+    <None Include="binaries/osx-arm64/*" Pack="true" PackagePath="tools/net8.0/any/binaries/osx-arm64/" />
+    <None Include="binaries/osx-x64/*" Pack="true" PackagePath="tools/net8.0/any/binaries/osx-x64/" />
+    <None Include="binaries/win-x64/*" Pack="true" PackagePath="tools/net8.0/any/binaries/win-x64/" />
+  </ItemGroup>
+
+</Project>

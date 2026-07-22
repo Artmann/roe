@@ -18,6 +18,27 @@ src/App/Billing/InvoiceService.cs (App)
 found 1 dead file · 0 unused types · 1 unused member — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 74 ms
 ```
 
+## Install
+
+With the .NET SDK (8.0 or later):
+
+```
+dotnet tool install --global roe
+dnx roe dead-code .             # or run one-shot without installing (.NET 10 SDK+)
+```
+
+With npm (the npm name `roe` was taken, but the installed command is still `roe`):
+
+```
+npm install --global roe-cli
+npx roe-cli dead-code .         # or run one-shot without installing
+```
+
+Prebuilt binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows (x64)
+are attached to [GitHub Releases](https://github.com/Artmann/roe/releases)
+alongside a `SHA256SUMS` file. macOS quarantines binaries downloaded with a
+browser; clear it with `xattr -d com.apple.quarantine ./roe`.
+
 ## Usage
 
 ```
@@ -198,3 +219,20 @@ cargo run -- dupes tests/fixtures/dupes_exact_clone
 Fixtures under `tests/fixtures/` are miniature solutions pinning the
 false-positive kill list; they are parsed, never compiled or executed.
 roe never runs the code it analyzes.
+
+### Releasing
+
+1. Bump `version` in `Cargo.toml` and commit (`chore(release): v0.2.0`).
+2. Tag and push: `git tag v0.2.0 && git push origin main v0.2.0`.
+3. The [release workflow](.github/workflows/release.yml) builds binaries for
+   every platform, creates the GitHub Release, and publishes `roe` to NuGet
+   and `roe-cli` to npm. The npm and NuGet versions are stamped from the tag
+   in CI, so `Cargo.toml` is the only place a version is ever bumped.
+
+npm publishing authenticates with [trusted publishing](https://docs.npmjs.com/trusted-publishers)
+(OIDC, no token). npm can't create a package via OIDC, so bootstrapping a
+fresh registry requires publishing a `0.0.0` placeholder once with a granular
+token (`npm publish` from `packaging/npm/roe-cli`), then configuring the
+trusted publisher on the package's npmjs.com settings page: repository
+`Artmann/roe`, workflow `release.yml`. NuGet publishing uses the
+`NUGET_API_KEY` repository secret.

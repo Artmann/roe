@@ -1,0 +1,215 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    name: Check tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare tag and Cargo.toml versions
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+
+          if [ "${tag_version}" != "${cargo_version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} doesn't match Cargo.toml version ${cargo_version}." >&2
+            echo "Bump the version in Cargo.toml, commit, and re-tag." >&2
+            exit 1
+          fi
+
+  test:
+    name: Test
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo test
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            binary: roe
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            binary: roe
+          - target: x86_64-apple-darwin
+            runner: macos-14
+            binary: roe
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            binary: roe.exe
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            binary: roe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package archive (unix)
+        if: runner.os != 'Windows'
+        run: |
+          staging="roe-${GITHUB_REF_NAME}-${{ matrix.target }}"
+
+          mkdir "${staging}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" LICENSE README.md "${staging}/"
+          tar czf "${staging}.tar.gz" "${staging}"
+
+      - name: Package archive (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $staging = "roe-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}", LICENSE, README.md $staging
+          Compress-Archive -Path $staging -DestinationPath "$staging.zip"
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: |
+            roe-*.tar.gz
+            roe-*.zip
+          if-no-files-found: error
+
+      - name: Upload raw binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.binary }}
+          if-no-files-found: error
+
+  github-release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: shasum -a 256 roe-* > SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --generate-notes \
+            roe-*.tar.gz roe-*.zip SHA256SUMS
+
+  # Authenticates via npm trusted publishing (OIDC) — no token secret. The
+  # trusted publisher for the roe-cli package must be configured on npmjs.com
+  # to point at this repository and this workflow file (release.yml).
+  npm-publish:
+    name: Publish npm package
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Trusted publishing needs npm 11.5.1+; Node 22 bundles npm 10.
+      - name: Update npm
+        run: npm install --global npm@latest
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: binaries
+
+      - name: Assemble package
+        run: node packaging/npm/prepare.js "${GITHUB_REF_NAME#v}" binaries
+
+      - name: Publish roe-cli
+        run: npm publish packaging/npm/build/roe-cli --access public
+
+  nuget-publish:
+    name: Publish NuGet package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: binaries
+
+      - name: Stage binaries by runtime identifier
+        run: |
+          declare -A rids=(
+            [aarch64-apple-darwin]=osx-arm64
+            [aarch64-unknown-linux-gnu]=linux-arm64
+            [x86_64-apple-darwin]=osx-x64
+            [x86_64-pc-windows-msvc]=win-x64
+            [x86_64-unknown-linux-gnu]=linux-x64
+          )
+
+          for target in "${!rids[@]}"; do
+            rid="${rids[${target}]}"
+
+            mkdir -p "packaging/nuget/binaries/${rid}"
+            cp binaries/bin-"${target}"/roe* "packaging/nuget/binaries/${rid}/"
+          done
+
+      - name: Pack
+        run: |
+          dotnet pack packaging/nuget/Roe.Tool.csproj \
+            --configuration Release \
+            --output packages \
+            "-p:Version=${GITHUB_REF_NAME#v}"
+
+      - name: Push
+        run: |
+          dotnet nuget push "packages/roe.${GITHUB_REF_NAME#v}.nupkg" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json

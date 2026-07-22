@@ -2,6 +2,16 @@
 name = "roe"
 version = "0.1.0"
 edition = "2024"
+description = "Codebase intelligence for C# — dead code and duplicate detection"
+license = "MIT"
+repository = "https://github.com/Artmann/roe"
+keywords = ["csharp", "dead-code", "duplicates", "static-analysis"]
+categories = ["command-line-utilities", "development-tools"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = "symbols"
 
 [dependencies]
 anyhow = "1.0.104"

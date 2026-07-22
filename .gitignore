@@ -1,8 +1,14 @@
 /target
 
 # .NET build output inside C# test fixtures — never source, always regenerable
-bin/
-obj/
+tests/fixtures/**/bin/
+tests/fixtures/**/obj/
 
 # insta pending-review diffs
 *.snap.new
+
+# packaging build output — assembled by CI at release time
+packaging/npm/build/
+packaging/nuget/bin/
+packaging/nuget/binaries/
+packaging/nuget/obj/

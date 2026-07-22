@@ -1,0 +1,26 @@
+{
+  "name": "roe-cli",
+  "version": "0.0.0",
+  "description": "Codebase intelligence for C# — dead code and duplicate detection",
+  "keywords": [
+    "cli",
+    "csharp",
+    "dead-code",
+    "duplicates",
+    "static-analysis"
+  ],
+  "homepage": "https://github.com/Artmann/roe#readme",
+  "bugs": "https://github.com/Artmann/roe/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Artmann/roe.git"
+  },
+  "license": "MIT",
+  "author": "Christoffer Artmann",
+  "bin": {
+    "roe": "bin/roe.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
