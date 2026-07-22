@@ -131,8 +131,6 @@ fn project_name(workspace: &Workspace, file_index: usize) -> Option<String> {
 
 fn display_path(workspace: &Workspace, file_index: usize) -> String {
     let path = &workspace.files[file_index].path;
-    path.strip_prefix(&workspace.root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
+
+    crate::paths::display(path.strip_prefix(&workspace.root).unwrap_or(path))
 }
