@@ -140,6 +140,13 @@ fn collect_leaves(node: Node, source: &[u8], tokens: &mut Vec<RawToken>) {
         return;
     }
 
+    // Using directives are file-header boilerplate — two files sharing an
+    // import block is not duplication worth reporting. Method-body `using`
+    // statements are a different node kind (`using_statement`) and stay.
+    if node.kind() == "using_directive" {
+        return;
+    }
+
     if node.child_count() == 0 {
         tokens.push(to_token(node, source));
         return;
@@ -207,6 +214,23 @@ mod tests {
 
         // class, A, {, }, <sentinel>
         assert_eq!(corpus.ids.len(), 5);
+    }
+
+    #[test]
+    fn using_directives_are_excluded_but_using_statements_are_not() {
+        let dir = temp_dir("usings");
+        let file = write_source(
+            &dir,
+            "A.cs",
+            "using System;\nusing System.Linq;\nclass A { void M() { using (var x = F()) {} } }\n",
+        );
+
+        let corpus = tokenize_all(&[file], DupeMode::Exact);
+        std::fs::remove_dir_all(&dir).ok();
+
+        // class, A, {, void, M, (, ), {, using, (, var, x, =, F, (, ), ),
+        // {, }, }, }, <sentinel> — no System/Linq tokens.
+        assert_eq!(corpus.ids.len(), 22);
     }
 
     #[test]

@@ -1,13 +1,11 @@
 ---
 source: tests/cli.rs
-assertion_line: 156
 expression: normalize(&output.stdout)
 ---
-2 occurrences (105 tokens, 24 lines)
-  ShippingService.cs:14:26-37:2
-  PaymentService.cs:14:26-37:2
+2 occurrences (103 tokens, 23 lines)
+  PaymentService.cs:15:5-37:2
+  ShippingService.cs:15:5-37:2
 
-  14 │         }, maxAttempts: 5);
   15 │     }
   16 │ 
   17 │     private async Task ExecuteWithRetryAsync(Func<Task> action, int maxAttempts)
@@ -32,4 +30,4 @@ expression: normalize(&output.stdout)
   36 │     }
   37 │ }
 
-found 1 duplicate group · 48 duplicated lines — 1 project(s), 2 file(s) scanned in <n> ms
+found 1 duplicate group · 46 duplicated lines — 1 project(s), 2 file(s) scanned in <n> ms

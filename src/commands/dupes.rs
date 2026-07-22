@@ -41,6 +41,11 @@ fn analyze_with_ignores(
 
     let mut workspace = discover::discover(root)?;
 
+    // Generated sources (obj/ harvest, *.g.cs, designer files) exist in the
+    // workspace for dead-code reference tracking, but duplication in them is
+    // the generator's business, not the user's.
+    workspace.files.retain(|file| !file.is_generated);
+
     if let Some((patterns, config_dir)) = ignore {
         let mut warnings = Vec::new();
         if let Some(set) = config::build_ignore_globset(config_dir, patterns, &mut warnings) {

@@ -11,11 +11,24 @@ struct Interval {
     right: usize,
 }
 
+/// A clone candidate still in token space: every occurrence starts at one of
+/// `positions` (ascending) and runs for `token_count` tokens.
+struct Candidate {
+    token_count: u32,
+    positions: Vec<usize>,
+}
+
+/// A candidate is subsumed when at least this fraction of every occurrence's
+/// token span is already covered by a kept group — it is a shorter or
+/// narrower echo of duplication the report already shows.
+const SUBSUMED_COVERAGE_THRESHOLD: f64 = 0.75;
+
 /// Finds duplicated token runs in `corpus` via suffix array + LCP interval
 /// extraction, filters out non-left-maximal (redundant, truncated) repeats,
-/// applies the threshold flags, and maps surviving token ranges back to
-/// source locations. Output is sorted by `(token_count desc, occurrence_count
-/// desc, first location asc)` for deterministic, most-impactful-first display.
+/// snaps matches to whole-line boundaries, applies the threshold flags,
+/// suppresses groups subsumed by higher-impact ones, and maps the survivors
+/// back to source locations. Output is sorted by redundant-token impact
+/// (`token_count × (occurrences − 1)` desc) for most-impactful-first display.
 pub fn extract_groups(
     corpus: &Corpus,
     min_tokens: u32,
@@ -25,7 +38,7 @@ pub fn extract_groups(
     let suffix_array = build_suffix_array(&corpus.ids);
     let lcp = build_lcp_array(&corpus.ids, &suffix_array);
 
-    let mut groups: Vec<DupeGroup> = lcp_intervals(&lcp)
+    let mut candidates: Vec<Candidate> = lcp_intervals(&lcp)
         .into_iter()
         .filter(|interval| interval.lcp >= min_tokens)
         .filter_map(|interval| {
@@ -34,46 +47,160 @@ pub fn extract_groups(
                 return None;
             }
 
-            let positions: Vec<usize> = suffix_array[interval.left..=interval.right]
+            let mut positions: Vec<usize> = suffix_array[interval.left..=interval.right]
                 .iter()
                 .map(|&index| index as usize)
                 .collect();
+            positions.sort_unstable();
 
             if !is_left_maximal(&corpus.ids, &positions) {
                 return None;
             }
 
-            let occurrences = to_occurrences(corpus, &positions, interval.lcp);
-            let line_count = occurrences
-                .iter()
-                .map(|occurrence| occurrence.end_line - occurrence.start_line + 1)
-                .min()
-                .unwrap_or(0);
-            if line_count < min_lines {
-                return None;
-            }
-
-            Some(DupeGroup {
-                token_count: interval.lcp,
-                line_count,
-                occurrences,
-            })
+            snap_to_line_boundaries(corpus, positions, interval.lcp)
+        })
+        .filter(|candidate| {
+            candidate.token_count >= min_tokens && minimum_line_span(corpus, candidate) >= min_lines
         })
         .collect();
 
-    groups.sort_by(|a, b| {
-        b.token_count
-            .cmp(&a.token_count)
-            .then_with(|| b.occurrences.len().cmp(&a.occurrences.len()))
-            .then_with(|| first_location(a).cmp(&first_location(b)))
+    candidates.sort_by(|a, b| {
+        impact(b)
+            .cmp(&impact(a))
+            .then_with(|| b.token_count.cmp(&a.token_count))
+            .then_with(|| a.positions.cmp(&b.positions))
     });
 
-    groups
+    suppress_subsumed(candidates, corpus.ids.len())
+        .into_iter()
+        .map(|candidate| DupeGroup {
+            token_count: candidate.token_count,
+            line_count: minimum_line_span(corpus, &candidate),
+            occurrences: to_occurrences(corpus, &candidate.positions, candidate.token_count),
+        })
+        .collect()
 }
 
-fn first_location(group: &DupeGroup) -> (std::path::PathBuf, u32, u32) {
-    let first = &group.occurrences[0];
-    (first.file.clone(), first.start_line, first.start_column)
+/// Redundant tokens this clone represents — everything past the first
+/// occurrence could in principle be deleted. A short block copied seven times
+/// outranks a long block copied twice.
+fn impact(candidate: &Candidate) -> u64 {
+    candidate.token_count as u64 * (candidate.positions.len() as u64).saturating_sub(1)
+}
+
+/// The line span of the shortest occurrence, matching how `min_lines` was
+/// always interpreted.
+fn minimum_line_span(corpus: &Corpus, candidate: &Candidate) -> u32 {
+    let length = candidate.token_count as usize;
+
+    candidate
+        .positions
+        .iter()
+        .map(|&start| {
+            let first = &corpus.positions[start];
+            let last = &corpus.positions[start + length - 1];
+
+            last.end_line - first.start_line + 1
+        })
+        .min()
+        .unwrap_or(0)
+}
+
+/// Trims the shared token range so that, in every occurrence, the first token
+/// starts its source line and the last token ends its line. Raw maximal
+/// repeats often begin right after a differing token (a method name, say) and
+/// get reported as a confusing mid-line span whose first printed line is not
+/// actually identical across occurrences. Returns `None` when no whole-line
+/// core remains.
+fn snap_to_line_boundaries(
+    corpus: &Corpus,
+    positions: Vec<usize>,
+    token_count: u32,
+) -> Option<Candidate> {
+    let token_count = token_count as usize;
+
+    let leading = (0..token_count).find(|&offset| {
+        positions
+            .iter()
+            .all(|&start| starts_line(corpus, start + offset))
+    })?;
+    let last = (leading..token_count).rev().find(|&offset| {
+        positions
+            .iter()
+            .all(|&start| ends_line(corpus, start + offset))
+    })?;
+
+    Some(Candidate {
+        token_count: (last - leading + 1) as u32,
+        positions: positions.iter().map(|&start| start + leading).collect(),
+    })
+}
+
+/// True when no earlier token shares this token's first line. File sentinels
+/// carry a zeroed position (`start_line` 0), so the first real token after
+/// one also counts as a line start.
+fn starts_line(corpus: &Corpus, index: usize) -> bool {
+    if index == 0 {
+        return true;
+    }
+
+    let previous = &corpus.positions[index - 1];
+    let current = &corpus.positions[index];
+
+    previous.start_line == 0
+        || previous.file_index != current.file_index
+        || previous.end_line < current.start_line
+}
+
+/// True when no later token shares this token's last line.
+fn ends_line(corpus: &Corpus, index: usize) -> bool {
+    let current = &corpus.positions[index];
+
+    match corpus.positions.get(index + 1) {
+        None => true,
+        Some(next) => {
+            next.start_line == 0
+                || next.file_index != current.file_index
+                || next.start_line > current.end_line
+        }
+    }
+}
+
+/// Greedy overlap suppression. Candidates arrive in impact order; each kept
+/// candidate claims its token spans, and a later candidate survives only if
+/// at least one of its occurrences still lands mostly on unclaimed tokens.
+/// This collapses the lattice of sub-runs a maximal-repeat search emits
+/// around every real clone (the same block otherwise gets reported at many
+/// slightly different lengths and occurrence counts).
+fn suppress_subsumed(candidates: Vec<Candidate>, corpus_length: usize) -> Vec<Candidate> {
+    let mut claimed = vec![false; corpus_length];
+    let mut kept = Vec::new();
+
+    for candidate in candidates {
+        let length = candidate.token_count as usize;
+
+        let adds_new_territory = candidate.positions.iter().any(|&start| {
+            let covered = claimed[start..start + length]
+                .iter()
+                .filter(|&&slot| slot)
+                .count();
+
+            (covered as f64) < (length as f64) * SUBSUMED_COVERAGE_THRESHOLD
+        });
+
+        if !adds_new_territory {
+            continue;
+        }
+
+        for &start in &candidate.positions {
+            for slot in &mut claimed[start..start + length] {
+                *slot = true;
+            }
+        }
+        kept.push(candidate);
+    }
+
+    kept
 }
 
 fn to_occurrences(corpus: &Corpus, positions: &[usize], token_count: u32) -> Vec<Occurrence> {
@@ -256,6 +383,137 @@ mod tests {
     #[test]
     fn no_duplicates_produces_no_groups() {
         let corpus = corpus_from_ids(&[1, 2, 3, 4, 5, 6], 0, &["a.cs"]);
+        assert!(extract_groups(&corpus, 1, 1, 2).is_empty());
+    }
+
+    #[test]
+    fn shorter_echo_of_a_kept_group_is_suppressed() {
+        // "2,3,4,5" appears three times (impact 8); "1,2,3,4,5" appears twice
+        // (impact 5). The wide trio is kept first and claims its spans; the
+        // pair then adds only one fresh token per occurrence (80% covered),
+        // so it is dropped as a redundant echo.
+        let corpus = corpus_from_ids(
+            &[1, 2, 3, 4, 5, 90, 1, 2, 3, 4, 5, 91, 2, 3, 4, 5, 92],
+            0,
+            &["a.cs"],
+        );
+        let groups = extract_groups(&corpus, 1, 1, 2);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].token_count, 4);
+        assert_eq!(groups[0].occurrences.len(), 3);
+    }
+
+    #[test]
+    fn genuinely_longer_pair_survives_suppression() {
+        // The 8-token pair (impact 8) is kept first; the 3-token trio
+        // (impact 6) still survives because its third occurrence lands
+        // entirely on unclaimed tokens.
+        let corpus = corpus_from_ids(
+            &[
+                1, 2, 3, 4, 5, 6, 7, 8, 90, 1, 2, 3, 4, 5, 6, 7, 8, 91, 1, 2, 3, 92,
+            ],
+            0,
+            &["a.cs"],
+        );
+        let groups = extract_groups(&corpus, 1, 1, 2);
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].token_count, 8);
+        assert_eq!(groups[0].occurrences.len(), 2);
+        assert_eq!(groups[1].token_count, 3);
+        assert_eq!(groups[1].occurrences.len(), 3);
+    }
+
+    #[test]
+    fn groups_are_ranked_by_redundant_token_impact() {
+        // A 3-token clone with three occurrences (impact 6) outranks a
+        // 5-token clone with two (impact 5), even though the latter is
+        // longer.
+        let corpus = corpus_from_ids(
+            &[
+                1, 2, 3, 90, 1, 2, 3, 91, 1, 2, 3, 92, 4, 5, 6, 7, 8, 93, 4, 5, 6, 7, 8, 94,
+            ],
+            0,
+            &["a.cs"],
+        );
+        let groups = extract_groups(&corpus, 1, 1, 2);
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].token_count, 3);
+        assert_eq!(groups[0].occurrences.len(), 3);
+        assert_eq!(groups[1].token_count, 5);
+        assert_eq!(groups[1].occurrences.len(), 2);
+    }
+
+    /// A corpus with hand-placed positions, for line-snapping tests where
+    /// tokens must share lines.
+    fn corpus_with_positions(ids: &[u32], positions: Vec<TokenPosition>) -> Corpus {
+        Corpus {
+            ids: ids.to_vec(),
+            positions,
+            files: vec![PathBuf::from("a.cs")],
+        }
+    }
+
+    fn position(start_line: u32, start_column: u32) -> TokenPosition {
+        TokenPosition {
+            file_index: 0,
+            start_line,
+            start_column,
+            end_line: start_line,
+            end_column: start_column + 1,
+        }
+    }
+
+    #[test]
+    fn match_starting_mid_line_is_snapped_to_the_next_line_start() {
+        // "1,2,3" repeats at positions 1 and 6, but token 1 shares its line
+        // with a differing prefix token (9 vs 8) in both occurrences. The
+        // match must shrink to the whole-line "2,3" core.
+        let ids = [9, 1, 2, 3, 90, 8, 1, 2, 3, 91];
+        let positions = vec![
+            position(1, 1), // 9
+            position(1, 4), // 1 — same line as the differing 9
+            position(2, 1), // 2
+            position(3, 1), // 3
+            position(4, 1), // 90
+            position(5, 1), // 8
+            position(5, 4), // 1 — same line as the differing 8
+            position(6, 1), // 2
+            position(7, 1), // 3
+            position(8, 1), // 91
+        ];
+        let corpus = corpus_with_positions(&ids, positions);
+        let groups = extract_groups(&corpus, 1, 1, 2);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].token_count, 2);
+        assert_eq!(groups[0].occurrences[0].start_line, 2);
+        assert_eq!(groups[0].occurrences[0].start_column, 1);
+        assert_eq!(groups[0].occurrences[0].end_line, 3);
+        assert_eq!(groups[0].occurrences[1].start_line, 6);
+    }
+
+    #[test]
+    fn match_that_never_reaches_a_line_boundary_is_dropped() {
+        // "1,2" repeats, but in both occurrences the whole match sits
+        // mid-line between differing neighbors — no whole-line core exists.
+        let ids = [9, 1, 2, 8, 90, 7, 1, 2, 6, 91];
+        let positions = vec![
+            position(1, 1),  // 9
+            position(1, 4),  // 1
+            position(1, 7),  // 2
+            position(1, 10), // 8
+            position(2, 1),  // 90
+            position(3, 1),  // 7
+            position(3, 4),  // 1
+            position(3, 7),  // 2
+            position(3, 10), // 6
+            position(4, 1),  // 91
+        ];
+        let corpus = corpus_with_positions(&ids, positions);
+
         assert!(extract_groups(&corpus, 1, 1, 2).is_empty());
     }
 }

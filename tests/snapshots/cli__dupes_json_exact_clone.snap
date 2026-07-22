@@ -1,6 +1,5 @@
 ---
 source: tests/cli.rs
-assertion_line: 197
 expression: stdout
 ---
 {
@@ -11,25 +10,25 @@ expression: stdout
     "projects": 1,
     "filesScanned": 2,
     "groups": 1,
-    "duplicatedLines": 48,
+    "duplicatedLines": 46,
     "elapsedMs": 0
   },
   "groups": [
     {
-      "tokenCount": 105,
-      "lineCount": 24,
+      "tokenCount": 103,
+      "lineCount": 23,
       "occurrences": [
         {
-          "file": "ShippingService.cs",
-          "startLine": 14,
-          "startColumn": 26,
+          "file": "PaymentService.cs",
+          "startLine": 15,
+          "startColumn": 5,
           "endLine": 37,
           "endColumn": 2
         },
         {
-          "file": "PaymentService.cs",
-          "startLine": 14,
-          "startColumn": 26,
+          "file": "ShippingService.cs",
+          "startLine": 15,
+          "startColumn": 5,
           "endLine": 37,
           "endColumn": 2
         }
