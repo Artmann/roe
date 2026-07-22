@@ -71,6 +71,11 @@ pub struct DupesArgs {
     #[arg(long, value_enum, default_value_t = DupeMode::Exact)]
     pub mode: DupeMode,
 
+    /// Hide the duplicated source code printed under each group (human format
+    /// only)
+    #[arg(long)]
+    pub no_code: bool,
+
     /// Minimum token-run length for a match to be reported
     #[arg(long, default_value_t = 50)]
     pub min_tokens: u32,

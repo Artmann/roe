@@ -128,5 +128,6 @@ pub fn run(args: &DupesArgs) -> anyhow::Result<ExitCode> {
         &analysis.workspace,
         args.format,
         args.mode,
+        !args.no_code,
     ))
 }

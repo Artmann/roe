@@ -157,6 +157,32 @@ fn dupes_exact_clone_exit_code_1_and_human_output() {
 }
 
 #[test]
+fn dupes_no_code_hides_snippet() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_exact_clone"), "--no-code"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    insta::assert_snapshot!("dupes_human_exact_clone_no_code", normalize(&output.stdout));
+}
+
+#[test]
+fn dupes_semantic_mode_notes_representative_snippet() {
+    let output = roe()
+        .args([
+            "dupes",
+            &fixture("dupes_semantic_clone"),
+            "--mode",
+            "semantic",
+        ])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("showing first occurrence"));
+}
+
+#[test]
 fn dupes_json_output_is_stable() {
     let output = roe()
         .args(["dupes", &fixture("dupes_exact_clone"), "--format", "json"])
