@@ -2,6 +2,7 @@
 - Don't use unwrap unless you are 100% sure the value is not null or undefined. Use `invariant` or `assert` instead.
 - Use conventional commits. If you are making changes to specific commands, use that as the scope. For example, `fix(dead-code): Avoid matching variables with the same name.`.
 - Use semver for versioning. For example, `1.0.0` is the first release, `1.0.1` is a patch, `1.1.0` is a minor release, and `2.0.0` is a major release.
+- Never hand-edit `version` in `Cargo.toml`. It's managed by release-please from conventional commits — see "Releasing" in CONTRIBUTING.md.
 
 ## Code Style
 

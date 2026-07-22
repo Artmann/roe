@@ -66,12 +66,35 @@ code style guide.
 
 ## Releasing
 
-1. Bump `version` in `Cargo.toml` and commit (`chore(release): v0.2.0`).
-2. Tag and push: `git tag v0.2.0 && git push origin main v0.2.0`.
-3. The [release workflow](.github/workflows/release.yml) builds binaries for
-   every platform, creates the GitHub Release, and publishes `roe` to NuGet
-   and `roe-cli` to npm. The npm and NuGet versions are stamped from the tag
-   in CI, so `Cargo.toml` is the only place a version is ever bumped.
+Releases are managed by [release-please](https://github.com/googleapis/release-please),
+configured in `release-please-config.json` and `.release-please-manifest.json`.
+Never hand-edit `version` in `Cargo.toml` — release-please owns it.
+
+1. Every push to `main` runs the
+   [release-please workflow](.github/workflows/release-please.yml), which
+   reads conventional commits since the last release and keeps a "Release PR"
+   up to date with the next `Cargo.toml` version bump and generated
+   `CHANGELOG.md` entry (`fix:` → patch, `feat:` → minor, `!`/`BREAKING
+   CHANGE` → major).
+2. Merge that PR when you want to ship. release-please tags the resulting
+   commit (`vX.Y.Z`) but does not create a GitHub Release itself
+   (`skip-github-release: true`) — that's left to the workflow below so
+   binaries and package publishes stay attached to the same release.
+3. The tag push triggers the [release workflow](.github/workflows/release.yml),
+   which builds binaries for every platform, creates the GitHub Release, and
+   publishes `roe` to NuGet and `roe-cli` to npm. The npm and NuGet versions
+   are stamped from the tag in CI.
+
+The release-please workflow authenticates with a `RELEASE_PLEASE_TOKEN`
+repository secret (a PAT or GitHub App token) rather than the default
+`GITHUB_TOKEN` — pushes made with `GITHUB_TOKEN` don't trigger other
+workflows, so the release tag would never fire `release.yml`.
+
+The first release (`1.0.0`) is pinned via `release-as` in
+`release-please-config.json`, since there's no prior tag for release-please
+to compute a bump from. Remove that `release-as` override once the `1.0.0`
+release PR has merged — after that, versions should always come from
+conventional commits.
 
 npm publishing authenticates with [trusted publishing](https://docs.npmjs.com/trusted-publishers)
 (OIDC, no token). npm can't create a package via OIDC, so bootstrapping a

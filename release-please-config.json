@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "rust",
+  "packages": {
+    ".": {
+      "release-as": "1.0.0",
+      "skip-github-release": true
+    }
+  }
+}
