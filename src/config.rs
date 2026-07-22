@@ -76,7 +76,7 @@ fn find_in_dir(dir: &Path, warnings: &mut Vec<String>) -> anyhow::Result<Option<
 /// are hard errors — the user pointed at this file deliberately, so silently
 /// ignoring a typo would hide the fact suppression isn't actually applied.
 pub fn load_explicit(path: &Path) -> anyhow::Result<ResolvedConfig> {
-    let path = std::fs::canonicalize(path)
+    let path = crate::paths::canonicalize(path)
         .with_context(|| format!("config file not found: {}", path.display()))?;
     load_file(&path)
 }

@@ -92,7 +92,7 @@ pub fn run(args: &DupesArgs) -> anyhow::Result<ExitCode> {
     let resolved_config = match &args.config {
         Some(path) => Some(config::load_explicit(path)?),
         None => {
-            let canonical_root = std::fs::canonicalize(&root)
+            let canonical_root = crate::paths::canonicalize(&root)
                 .with_context(|| format!("path not found: {}", root.display()))?;
             let config_start = if canonical_root.is_dir() {
                 canonical_root
