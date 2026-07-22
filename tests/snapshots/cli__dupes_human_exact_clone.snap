@@ -1,0 +1,10 @@
+---
+source: tests/cli.rs
+assertion_line: 156
+expression: normalize(&output.stdout)
+---
+2 occurrences (105 tokens, 24 lines)
+  ShippingService.cs:14:26-37:2
+  PaymentService.cs:14:26-37:2
+
+found 1 duplicate group · 48 duplicated lines — 1 project(s), 2 file(s) scanned in <n> ms

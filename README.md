@@ -2,7 +2,9 @@
 
 Codebase intelligence for C#. Finds dead code — unused types, members, and
 files — by building a reference graph of your solution and mark-and-sweeping
-from its entry points.
+from its entry points. Also finds duplicated code — copy-pasted (and,
+optionally, copy-pasted-and-renamed) blocks — via suffix-array analysis over
+tokenized source.
 
 ```
 $ roe dead-code path/to/solution
@@ -118,6 +120,56 @@ and `roots` set defaults for the matching CLI flags: an explicit `--aggressive`
 or `--root` always wins, otherwise the config's value applies, otherwise the
 built-in default (`false` / no extra roots).
 
+## `roe dupes`
+
+```
+$ roe dupes path/to/solution
+
+2 occurrences (105 tokens, 24 lines)
+  src/App/Billing/PaymentService.cs:40:5-63:6
+  src/App/Shipping/ShippingService.cs:38:5-61:6
+
+found 1 duplicate group · 48 duplicated lines — 1 project(s), 214 file(s) scanned in 61 ms
+```
+
+### Usage
+
+```
+roe dupes [PATH]               # directory, .sln, or .csproj (default: cwd)
+roe dupes --format json        # machine-readable, stable v1 schema
+roe dupes --mode semantic      # also catch copy-paste-and-rename clones
+roe dupes --min-tokens 50      # shortest match to report (default: 50)
+roe dupes --min-lines 5        # shortest line-span to report (default: 5)
+roe dupes --min-occurrences 2  # smallest group size to report (default: 2)
+roe dupes --config PATH        # use this roe.json/roe.yaml instead of auto-discovery
+```
+
+Exit codes: `0` clean · `1` findings · `2` error.
+
+### How it works
+
+1. **Tokenize** — parses every `.cs` file in parallel with tree-sitter and
+   collects every leaf token (comments and preprocessor directives excluded).
+   In `exact` mode (the default) each token keeps its own text; in `semantic`
+   mode identifiers and numeric literals collapse to one placeholder per kind,
+   so a renamed-but-structurally-identical copy still matches, while string
+   literals, keywords, and punctuation always keep their exact text.
+2. **Suffix array + LCP array** — the whole codebase becomes one dense token
+   stream (a unique sentinel after each file keeps matches from crossing file
+   boundaries), and a suffix array plus Kasai's LCP array find every maximal
+   repeated run in it.
+3. **Extract groups** — LCP intervals are turned into candidate duplicate
+   groups, non-maximal submatches (a truncated prefix of a longer repeat
+   reported elsewhere) are dropped, and the rest are filtered by
+   `--min-tokens`, `--min-lines` (using the shortest span across a group's
+   occurrences), and `--min-occurrences`.
+4. **Report** — surviving groups are sorted by size (tokens, then occurrence
+   count) so the most impactful duplication surfaces first.
+
+Duplicates are excluded the same way as dead-code findings — via a config
+file's `ignore` globs — since a match spans multiple files and doesn't map
+cleanly onto a single-line inline suppression comment.
+
 ## Known limitations
 
 - Name-based resolution conflates same-named symbols — dead code hiding
@@ -131,6 +183,8 @@ built-in default (`false` / no extra roots).
 - Razor/`.cshtml` markup is not parsed — build first so `obj/` generated
   sources stand in for it.
 - Compiler-synthesized calls (e.g. range/index polyfills) are invisible.
+- `roe dupes` does not de-duplicate overlapping/nested occurrences of the same
+  pattern repeated within a single long method — each is reported as-is.
 
 ## Development
 
@@ -138,6 +192,7 @@ built-in default (`false` / no extra roots).
 cargo test                 # unit + integration + snapshot tests
 cargo clippy --all-targets
 cargo run -- dead-code tests/fixtures/console_app
+cargo run -- dupes tests/fixtures/dupes_exact_clone
 ```
 
 Fixtures under `tests/fixtures/` are miniature solutions pinning the

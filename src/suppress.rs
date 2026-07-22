@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
 use rustc_hash::FxHashMap;
 
+use crate::config::build_ignore_globset;
 use crate::model::{AnalysisResult, Finding, FindingKind, Summary, Workspace};
 
 /// eslint-style inline suppression, always applied (no config needed).
@@ -38,41 +38,10 @@ pub fn apply_config_ignores(
     let Some(set) = build_ignore_globset(config_dir, ignore_patterns, warnings) else {
         return;
     };
-    result.findings.retain(|finding| !set.is_match(&finding.file));
+    result
+        .findings
+        .retain(|finding| !set.is_match(&finding.file));
     recount(&result.findings, &mut result.summary);
-}
-
-fn build_ignore_globset(
-    config_dir: &Path,
-    patterns: &[String],
-    warnings: &mut Vec<String>,
-) -> Option<GlobSet> {
-    let mut builder = GlobSetBuilder::new();
-    let mut any = false;
-    for pattern in patterns {
-        if pattern.contains("..") {
-            warnings.push(format!("unsupported ignore glob with '..': {pattern}"));
-            continue;
-        }
-        // A trailing slash reads as "this whole directory" without the user
-        // having to spell out `**` themselves.
-        let expanded = match pattern.strip_suffix('/') {
-            Some(dir) => format!("{dir}/**"),
-            None => pattern.clone(),
-        };
-        let absolute = format!("{}/{}", config_dir.display(), expanded);
-        match Glob::new(&absolute) {
-            Ok(glob) => {
-                builder.add(glob);
-                any = true;
-            }
-            Err(error) => warnings.push(format!("invalid ignore glob {pattern}: {error}")),
-        }
-    }
-    if !any {
-        return None;
-    }
-    builder.build().ok()
 }
 
 fn recount(findings: &[Finding], summary: &mut Summary) {
@@ -132,13 +101,14 @@ fn parse_suppressions(source: &str, file: &Path, warnings: &mut Vec<String>) -> 
             continue;
         };
         let comment = line[comment_at + 2..].trim_start();
-        let (marker_rest, target_line) = if let Some(rest) = comment.strip_prefix("roe-ignore-next-line") {
-            (rest, line_no + 1)
-        } else if let Some(rest) = comment.strip_prefix("roe-ignore-line") {
-            (rest, line_no)
-        } else {
-            continue;
-        };
+        let (marker_rest, target_line) =
+            if let Some(rest) = comment.strip_prefix("roe-ignore-next-line") {
+                (rest, line_no + 1)
+            } else if let Some(rest) = comment.strip_prefix("roe-ignore-line") {
+                (rest, line_no)
+            } else {
+                continue;
+            };
 
         let filter = parse_rule_filter(marker_rest, file, line_no, warnings);
         if filter.matches(FindingKind::UnusedFile) {
@@ -153,7 +123,12 @@ fn parse_suppressions(source: &str, file: &Path, warnings: &mut Vec<String>) -> 
 /// whitespace-separated token is the (optional) comma-separated rule list;
 /// anything after that is treated as free-form trailing note text and
 /// ignored. An empty/absent rule list means "suppress any finding kind."
-fn parse_rule_filter(remainder: &str, file: &Path, line_no: u32, warnings: &mut Vec<String>) -> RuleFilter {
+fn parse_rule_filter(
+    remainder: &str,
+    file: &Path,
+    line_no: u32,
+    warnings: &mut Vec<String>,
+) -> RuleFilter {
     let rule_list = remainder.split_whitespace().next().unwrap_or("");
     if rule_list.is_empty() {
         return RuleFilter::Any;
@@ -247,19 +222,5 @@ mod tests {
             &mut warnings,
         );
         assert!(suppressions.suppresses(1, FindingKind::UnusedFile));
-    }
-
-    #[test]
-    fn ignore_glob_trailing_slash_matches_whole_directory() {
-        let mut warnings = Vec::new();
-        let set = build_ignore_globset(
-            Path::new("/repo"),
-            &["Generated/".to_string()],
-            &mut warnings,
-        )
-        .expect("globset builds");
-        assert!(set.is_match(Path::new("/repo/Generated/Nested/File.cs")));
-        assert!(!set.is_match(Path::new("/repo/Other/File.cs")));
-        assert!(warnings.is_empty());
     }
 }

@@ -147,6 +147,124 @@ fn explicit_config_flag_overrides_auto_discovery() {
 }
 
 #[test]
+fn dupes_exact_clone_exit_code_1_and_human_output() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_exact_clone")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    insta::assert_snapshot!("dupes_human_exact_clone", normalize(&output.stdout));
+}
+
+#[test]
+fn dupes_json_output_is_stable() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_exact_clone"), "--format", "json"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(parsed["version"], 1);
+    assert_eq!(parsed["mode"], "exact");
+    insta::assert_snapshot!("dupes_json_exact_clone", stdout);
+}
+
+#[test]
+fn dupes_renamed_clone_is_invisible_in_exact_mode() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_semantic_clone")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"));
+}
+
+#[test]
+fn dupes_renamed_clone_is_found_with_semantic_mode() {
+    let output = roe()
+        .args([
+            "dupes",
+            &fixture("dupes_semantic_clone"),
+            "--mode",
+            "semantic",
+        ])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("found 1 duplicate group"));
+}
+
+#[test]
+fn dupes_clean_codebase_exits_0() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_no_duplicates")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"));
+}
+
+#[test]
+fn dupes_below_threshold_is_hidden_by_default_but_found_when_relaxed() {
+    let clean = roe()
+        .args(["dupes", &fixture("dupes_below_threshold")])
+        .output()
+        .expect("command runs");
+    assert_eq!(clean.status.code(), Some(0));
+
+    let relaxed = roe()
+        .args([
+            "dupes",
+            &fixture("dupes_below_threshold"),
+            "--min-tokens",
+            "5",
+            "--min-lines",
+            "1",
+        ])
+        .output()
+        .expect("command runs");
+    assert_eq!(relaxed.status.code(), Some(1));
+}
+
+#[test]
+fn dupes_config_ignore_json_drops_the_ignored_occurrence() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_config_ignore_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"));
+}
+
+#[test]
+fn dupes_config_ignore_yaml_drops_the_ignored_occurrence() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_config_ignore_yaml")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"));
+}
+
+#[test]
+fn dupes_invalid_path_exits_2() {
+    let output = roe()
+        .args(["dupes", "/definitely/not/a/real/path"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error:"));
+}
+
+#[test]
 fn malformed_config_exits_2() {
     let output = roe()
         .args(["dead-code", &fixture("config_malformed")])

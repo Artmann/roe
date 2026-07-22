@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
 /// User-authored suppression/override settings, loaded from `roe.json`,
@@ -31,7 +32,10 @@ const CANDIDATES: [&str; 3] = ["roe.json", "roe.yaml", "roe.yml"];
 /// to the parent directory and repeat until one is found or the filesystem
 /// root is reached. `Ok(None)` means nothing was found anywhere up the tree;
 /// a config that IS found but fails to parse is a hard error.
-pub fn discover(start: &Path, warnings: &mut Vec<String>) -> anyhow::Result<Option<ResolvedConfig>> {
+pub fn discover(
+    start: &Path,
+    warnings: &mut Vec<String>,
+) -> anyhow::Result<Option<ResolvedConfig>> {
     let mut dir = start.to_path_buf();
     loop {
         if let Some(resolved) = find_in_dir(&dir, warnings)? {
@@ -118,7 +122,11 @@ pub struct EffectiveArgs {
 /// explicitly `true` — there's no `--no-aggressive` to override a config's
 /// `true` back to `false`. `roots`, when passed on the CLI, replaces the
 /// config's list wholesale rather than merging with it.
-pub fn merge(config: Option<&RoeConfig>, cli_aggressive: bool, cli_roots: &[String]) -> EffectiveArgs {
+pub fn merge(
+    config: Option<&RoeConfig>,
+    cli_aggressive: bool,
+    cli_roots: &[String],
+) -> EffectiveArgs {
     let config_aggressive = config.and_then(|c| c.aggressive).unwrap_or(false);
     let roots = if !cli_roots.is_empty() {
         cli_roots.to_vec()
@@ -129,6 +137,42 @@ pub fn merge(config: Option<&RoeConfig>, cli_aggressive: bool, cli_roots: &[Stri
         aggressive: cli_aggressive || config_aggressive,
         roots,
     }
+}
+
+/// Builds a `GlobSet` from config-relative `ignore` glob patterns, resolved
+/// against `config_dir` (the config file's own directory). A trailing slash
+/// on a pattern reads as "this whole directory" without the user having to
+/// spell out `**` themselves. Returns `None` if no pattern successfully
+/// builds a glob (nothing to match against).
+pub(crate) fn build_ignore_globset(
+    config_dir: &Path,
+    patterns: &[String],
+    warnings: &mut Vec<String>,
+) -> Option<GlobSet> {
+    let mut builder = GlobSetBuilder::new();
+    let mut any = false;
+    for pattern in patterns {
+        if pattern.contains("..") {
+            warnings.push(format!("unsupported ignore glob with '..': {pattern}"));
+            continue;
+        }
+        let expanded = match pattern.strip_suffix('/') {
+            Some(dir) => format!("{dir}/**"),
+            None => pattern.clone(),
+        };
+        let absolute = format!("{}/{}", config_dir.display(), expanded);
+        match Glob::new(&absolute) {
+            Ok(glob) => {
+                builder.add(glob);
+                any = true;
+            }
+            Err(error) => warnings.push(format!("invalid ignore glob {pattern}: {error}")),
+        }
+    }
+    if !any {
+        return None;
+    }
+    builder.build().ok()
 }
 
 #[cfg(test)]
@@ -196,8 +240,9 @@ mod tests {
 
     #[test]
     fn parses_yaml() {
-        let config: RoeConfig = serde_yaml_ng::from_str("aggressive: true\nignore:\n  - Generated/\n")
-            .expect("valid yaml");
+        let config: RoeConfig =
+            serde_yaml_ng::from_str("aggressive: true\nignore:\n  - Generated/\n")
+                .expect("valid yaml");
         assert_eq!(config.aggressive, Some(true));
         assert_eq!(config.ignore, Some(vec!["Generated/".to_string()]));
     }
@@ -233,5 +278,19 @@ mod tests {
         let result = discover(&dir, &mut warnings);
         std::fs::remove_dir_all(&dir).ok();
         assert!(result.expect("discover should succeed").is_none());
+    }
+
+    #[test]
+    fn ignore_glob_trailing_slash_matches_whole_directory() {
+        let mut warnings = Vec::new();
+        let set = build_ignore_globset(
+            Path::new("/repo"),
+            &["Generated/".to_string()],
+            &mut warnings,
+        )
+        .expect("globset builds");
+        assert!(set.is_match(Path::new("/repo/Generated/Nested/File.cs")));
+        assert!(!set.is_match(Path::new("/repo/Other/File.cs")));
+        assert!(warnings.is_empty());
     }
 }

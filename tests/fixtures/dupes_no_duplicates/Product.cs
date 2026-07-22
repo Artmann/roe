@@ -1,0 +1,15 @@
+namespace Catalog;
+
+public class Product
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public decimal Price { get; set; }
+
+    public bool IsOnSale(decimal threshold)
+    {
+        return Price < threshold && Price > 0;
+    }
+}

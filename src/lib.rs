@@ -1,5 +1,6 @@
 pub mod analyze;
 pub mod cli;
+pub mod clone_extraction;
 pub mod commands;
 pub mod config;
 pub mod discover;
@@ -10,7 +11,9 @@ pub mod model;
 pub mod report;
 pub mod resolve;
 pub mod rules;
+pub mod suffix_array;
 pub mod suppress;
+pub mod tokenize;
 
 use std::process::ExitCode;
 
@@ -21,6 +24,7 @@ pub fn run() -> ExitCode {
 
     let result = match cli.command {
         cli::Command::DeadCode(args) => commands::dead_code::run(&args),
+        cli::Command::Dupes(args) => commands::dupes::run(&args),
     };
 
     match result {

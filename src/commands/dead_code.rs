@@ -8,7 +8,9 @@ use lasso::ThreadedRodeo;
 use crate::cli::DeadCodeArgs;
 use crate::model::{AnalysisResult, SymbolId, Workspace};
 use crate::resolve::SymbolFlags;
-use crate::{analyze, config, discover, entry_points, extract, graph, report, resolve, rules, suppress};
+use crate::{
+    analyze, config, discover, entry_points, extract, graph, report, resolve, rules, suppress,
+};
 
 pub struct Analysis {
     pub workspace: Workspace,
@@ -26,7 +28,9 @@ pub fn analyze(root: &Path, aggressive: bool, manual_roots: &[String]) -> anyhow
     let facts = extract::extract_all(&workspace.files, &rodeo);
 
     let mut resolution = resolve::build_symbols(&workspace.files, &facts, &rodeo);
+
     rules::apply_kill_list(&mut resolution, &workspace, &rodeo, aggressive);
+
     let notes = entry_points::mark_roots(&mut resolution, &workspace, &facts, manual_roots, &rodeo);
 
     let symbol_graph = graph::build_graph(&mut resolution, &workspace, &facts, &rodeo);

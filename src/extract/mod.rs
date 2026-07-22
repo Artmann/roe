@@ -99,7 +99,7 @@ impl FileFacts {
     }
 }
 
-fn make_parser() -> tree_sitter::Parser {
+pub(crate) fn make_parser() -> tree_sitter::Parser {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_c_sharp::LANGUAGE.into())
