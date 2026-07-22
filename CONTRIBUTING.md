@@ -70,25 +70,28 @@ Releases are managed by [release-please](https://github.com/googleapis/release-p
 configured in `release-please-config.json` and `.release-please-manifest.json`.
 Never hand-edit `version` in `Cargo.toml` — release-please owns it.
 
-1. Every push to `main` runs the
-   [release-please workflow](.github/workflows/release-please.yml), which
-   reads conventional commits since the last release and keeps a "Release PR"
-   up to date with the next `Cargo.toml` version bump and generated
-   `CHANGELOG.md` entry (`fix:` → patch, `feat:` → minor, `!`/`BREAKING
-   CHANGE` → major).
-2. Merge that PR when you want to ship. release-please tags the resulting
-   commit (`vX.Y.Z`) but does not create a GitHub Release itself
-   (`skip-github-release: true`) — that's left to the workflow below so
-   binaries and package publishes stay attached to the same release.
-3. The tag push triggers the [release workflow](.github/workflows/release.yml),
-   which builds binaries for every platform, creates the GitHub Release, and
-   publishes `roe` to NuGet and `roe-cli` to npm. The npm and NuGet versions
-   are stamped from the tag in CI.
+Everything runs in one workflow, [release.yml](.github/workflows/release.yml),
+triggered on every push to `main`:
 
-The release-please workflow authenticates with a `RELEASE_PLEASE_TOKEN`
-repository secret (a PAT or GitHub App token) rather than the default
-`GITHUB_TOKEN` — pushes made with `GITHUB_TOKEN` don't trigger other
-workflows, so the release tag would never fire `release.yml`.
+1. The `release-please` job reads conventional commits since the last release
+   and keeps a "Release PR" up to date with the next `Cargo.toml` version
+   bump and generated `CHANGELOG.md` entry (`fix:` → patch, `feat:` → minor,
+   `!`/`BREAKING CHANGE` → major).
+2. Merge that PR when you want to ship. release-please tags the merge commit
+   (`vX.Y.Z`) and creates the GitHub Release with generated notes.
+3. Because that tagging happens inside the same workflow run, the remaining
+   jobs (`test`, `build`, `publish-assets`, `npm-publish`, `nuget-publish`)
+   run right after, gated on `release_created`: they build binaries for every
+   platform, attach them plus a `SHA256SUMS` file to the release
+   release-please just created, and publish `roe` to NuGet and `roe-cli` to
+   npm. On a normal push with no release pending, those jobs are skipped and
+   only `release-please` runs.
+
+No extra token is needed — everything after the version-bump commit merges
+happens within the same workflow run (not a separately triggered one), so the
+default `GITHUB_TOKEN` is enough even for the tag/release step. npm still
+authenticates via trusted publishing (OIDC) and NuGet via the `NUGET_API_KEY`
+secret, unchanged.
 
 The first release (`1.0.0`) is pinned via `release-as` in
 `release-please-config.json`, since there's no prior tag for release-please

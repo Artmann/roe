@@ -3,8 +3,7 @@
   "release-type": "rust",
   "packages": {
     ".": {
-      "release-as": "1.0.0",
-      "skip-github-release": true
+      "release-as": "1.0.0"
     }
   }
 }

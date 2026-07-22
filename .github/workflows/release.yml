@@ -2,38 +2,36 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
 
 permissions:
-  contents: read
+  contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
-  check-version:
-    name: Check tag matches Cargo.toml
+  release-please:
+    name: Release Please
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Compare tag and Cargo.toml versions
-        run: |
-          tag_version="${GITHUB_REF_NAME#v}"
-          cargo_version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
-
-          if [ "${tag_version}" != "${cargo_version}" ]; then
-            echo "Tag ${GITHUB_REF_NAME} doesn't match Cargo.toml version ${cargo_version}." >&2
-            echo "Bump the version in Cargo.toml, commit, and re-tag." >&2
-            exit 1
-          fi
+      - uses: googleapis/release-please-action@v4
+        id: release
 
   test:
     name: Test
-    needs: check-version
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -43,7 +41,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.target }})
-    needs: test
+    needs: [release-please, test]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -66,6 +64,8 @@ jobs:
             binary: roe
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -79,8 +79,10 @@ jobs:
 
       - name: Package archive (unix)
         if: runner.os != 'Windows'
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          staging="roe-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          staging="roe-${TAG}-${{ matrix.target }}"
 
           mkdir "${staging}"
           cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" LICENSE README.md "${staging}/"
@@ -89,8 +91,10 @@ jobs:
       - name: Package archive (windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          $staging = "roe-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          $staging = "roe-$env:TAG-${{ matrix.target }}"
 
           New-Item -ItemType Directory -Path $staging | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}", LICENSE, README.md $staging
@@ -112,9 +116,9 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           if-no-files-found: error
 
-  github-release:
-    name: Create GitHub Release
-    needs: build
+  publish-assets:
+    name: Attach binaries to GitHub Release
+    needs: [release-please, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -127,13 +131,12 @@ jobs:
       - name: Generate checksums
         run: shasum -a 256 roe-* > SHA256SUMS
 
-      - name: Create release
+      - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --generate-notes \
             roe-*.tar.gz roe-*.zip SHA256SUMS
 
   # Authenticates via npm trusted publishing (OIDC) — no token secret. The
@@ -141,13 +144,15 @@ jobs:
   # to point at this repository and this workflow file (release.yml).
   npm-publish:
     name: Publish npm package
-    needs: build
+    needs: [release-please, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -163,17 +168,21 @@ jobs:
           path: binaries
 
       - name: Assemble package
-        run: node packaging/npm/prepare.js "${GITHUB_REF_NAME#v}" binaries
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: node packaging/npm/prepare.js "${TAG#v}" binaries
 
       - name: Publish roe-cli
         run: npm publish packaging/npm/build/roe-cli --access public
 
   nuget-publish:
     name: Publish NuGet package
-    needs: build
+    needs: [release-please, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -202,14 +211,18 @@ jobs:
           done
 
       - name: Pack
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           dotnet pack packaging/nuget/Roe.Tool.csproj \
             --configuration Release \
             --output packages \
-            "-p:Version=${GITHUB_REF_NAME#v}"
+            "-p:Version=${TAG#v}"
 
       - name: Push
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          dotnet nuget push "packages/roe.${GITHUB_REF_NAME#v}.nupkg" \
+          dotnet nuget push "packages/roe.${TAG#v}.nupkg" \
             --api-key "${{ secrets.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json
