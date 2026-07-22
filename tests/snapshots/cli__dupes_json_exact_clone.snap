@@ -1,11 +1,11 @@
 ---
 source: tests/cli.rs
-assertion_line: 171
+assertion_line: 197
 expression: stdout
 ---
 {
   "version": 1,
-  "root": "\\\\?\\C:\\Users\\Artga\\Code\\roe\\tests\\fixtures\\dupes_exact_clone",
+  "root": "<repo>/tests/fixtures/dupes_exact_clone",
   "mode": "exact",
   "summary": {
     "projects": 1,
