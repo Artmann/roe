@@ -44,7 +44,7 @@ struct JsonOccurrence {
 pub fn print(result: &DupesResult, workspace: &Workspace, mode: DupeMode) {
     let report = JsonReport {
         version: 1,
-        root: workspace.root.display().to_string(),
+        root: crate::paths::display(&workspace.root),
         mode: match mode {
             DupeMode::Exact => "exact",
             DupeMode::Semantic => "semantic",
@@ -66,12 +66,12 @@ pub fn print(result: &DupesResult, workspace: &Workspace, mode: DupeMode) {
                     .occurrences
                     .iter()
                     .map(|occurrence| JsonOccurrence {
-                        file: occurrence
-                            .file
-                            .strip_prefix(&workspace.root)
-                            .unwrap_or(&occurrence.file)
-                            .display()
-                            .to_string(),
+                        file: crate::paths::display(
+                            occurrence
+                                .file
+                                .strip_prefix(&workspace.root)
+                                .unwrap_or(&occurrence.file),
+                        ),
                         start_line: occurrence.start_line,
                         start_column: occurrence.start_column,
                         end_line: occurrence.end_line,

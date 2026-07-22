@@ -30,19 +30,17 @@ pub fn print(result: &AnalysisResult, workspace: &Workspace) {
                 println!();
             }
             current_file = Some(finding.file.as_path());
-            let display = finding
-                .file
-                .strip_prefix(&workspace.root)
-                .unwrap_or(&finding.file);
+            let display = crate::paths::display(
+                finding
+                    .file
+                    .strip_prefix(&workspace.root)
+                    .unwrap_or(&finding.file),
+            );
             match &finding.project {
                 Some(project) => {
-                    println!(
-                        "{} {}",
-                        display.display().to_string().bold(),
-                        format!("({project})").dimmed()
-                    );
+                    println!("{} {}", display.bold(), format!("({project})").dimmed());
                 }
-                None => println!("{}", display.display().to_string().bold()),
+                None => println!("{}", display.bold()),
             }
         }
         print_finding(finding);

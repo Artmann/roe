@@ -8,6 +8,7 @@ pub mod entry_points;
 pub mod extract;
 pub mod graph;
 pub mod model;
+pub mod paths;
 pub mod report;
 pub mod resolve;
 pub mod rules;

@@ -17,7 +17,12 @@ fn normalize(output: &[u8]) -> String {
     let elapsed = regex::Regex::new(r#""elapsedMs": \d+"#).expect("valid regex");
     let text = ms.replace_all(&text, "<n> ms");
     let text = elapsed.replace_all(&text, r#""elapsedMs": 0"#);
-    text.replace(env!("CARGO_MANIFEST_DIR"), "<repo>")
+    // Report paths always use forward slashes, so normalize the repo path the
+    // same way before replacing it — on Windows CARGO_MANIFEST_DIR has
+    // backslashes.
+    let repo = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
+
+    text.replace(&repo, "<repo>")
 }
 
 #[test]

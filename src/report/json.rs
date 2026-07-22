@@ -43,7 +43,7 @@ struct JsonFinding {
 pub fn print(result: &AnalysisResult, workspace: &Workspace) {
     let report = JsonReport {
         version: 1,
-        root: workspace.root.display().to_string(),
+        root: crate::paths::display(&workspace.root),
         summary: JsonSummary {
             projects: result.summary.projects,
             files_scanned: result.summary.files_scanned,
@@ -62,12 +62,12 @@ pub fn print(result: &AnalysisResult, workspace: &Workspace) {
                 symbol_kind: finding.symbol_kind.map(|k| k.label()),
                 name: finding.name.clone(),
                 project: finding.project.clone(),
-                file: finding
-                    .file
-                    .strip_prefix(&workspace.root)
-                    .unwrap_or(&finding.file)
-                    .display()
-                    .to_string(),
+                file: crate::paths::display(
+                    finding
+                        .file
+                        .strip_prefix(&workspace.root)
+                        .unwrap_or(&finding.file),
+                ),
                 line: finding.line,
                 column: finding.column,
                 visibility: finding.visibility.map(|v| v.label()),

@@ -32,7 +32,7 @@ impl SourceRules {
             } else {
                 // Literal paths may point outside the project dir (../Shared).
                 let path = root_dir.join(include);
-                match dunce_canonicalize(&path) {
+                match crate::paths::canonicalize(&path).ok() {
                     Some(path) => literal_includes.push(path),
                     None => warnings.push(format!(
                         "Compile Include not found: {} (project {})",
@@ -135,10 +135,6 @@ pub fn is_generated_path(path: &Path) -> bool {
         || path
             .components()
             .any(|c| c.as_os_str().eq_ignore_ascii_case("obj"))
-}
-
-fn dunce_canonicalize(path: &Path) -> Option<PathBuf> {
-    std::fs::canonicalize(path).ok()
 }
 
 #[cfg(test)]

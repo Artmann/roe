@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use colored::Colorize;
 
 use crate::cli::DupeMode;
@@ -53,7 +51,7 @@ fn print_group(group: &DupeGroup, workspace: &Workspace, mode: DupeMode, show_co
     for occurrence in &group.occurrences {
         println!(
             "  {}:{}:{}-{}:{}",
-            display_path(occurrence, workspace).display(),
+            display_path(occurrence, workspace),
             occurrence.start_line,
             occurrence.start_column,
             occurrence.end_line,
@@ -91,8 +89,7 @@ fn print_snippet(occurrence: &Occurrence, workspace: &Workspace) {
             println!(
                 "  {}",
                 format!(
-                    "(code not shown: could not read {}: {error} — the file may have changed since the scan)",
-                    display.display()
+                    "(code not shown: could not read {display}: {error} — the file may have changed since the scan)"
                 )
                 .dimmed()
             );
@@ -107,8 +104,7 @@ fn print_snippet(occurrence: &Occurrence, workspace: &Workspace) {
         println!(
             "  {}",
             format!(
-                "(code not shown: {} now has fewer lines than when it was scanned — the file may have changed since the scan)",
-                display.display()
+                "(code not shown: {display} now has fewer lines than when it was scanned — the file may have changed since the scan)"
             )
             .dimmed()
         );
@@ -131,8 +127,7 @@ fn print_snippet(occurrence: &Occurrence, workspace: &Workspace) {
         println!(
             "  {}",
             format!(
-                "({} now has fewer lines than when it was scanned — the file may have changed since the scan)",
-                display.display()
+                "({display} now has fewer lines than when it was scanned — the file may have changed since the scan)"
             )
             .dimmed()
         );
@@ -149,11 +144,13 @@ fn extract_lines(source: &str, start_line: u32, end_line: u32) -> Vec<&str> {
     source.lines().skip(start_index).take(count).collect()
 }
 
-fn display_path<'a>(occurrence: &'a Occurrence, workspace: &Workspace) -> &'a Path {
-    occurrence
-        .file
-        .strip_prefix(&workspace.root)
-        .unwrap_or(&occurrence.file)
+fn display_path(occurrence: &Occurrence, workspace: &Workspace) -> String {
+    crate::paths::display(
+        occurrence
+            .file
+            .strip_prefix(&workspace.root)
+            .unwrap_or(&occurrence.file),
+    )
 }
 
 fn pluralize(count: usize, noun: &str) -> String {

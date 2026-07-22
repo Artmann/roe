@@ -18,7 +18,7 @@ use sources::{Claim, SourceRules};
 /// Discover the workspace under `input`, which may be a directory, a .sln
 /// file, or a .csproj file.
 pub fn discover(input: &Path) -> anyhow::Result<Workspace> {
-    let input = std::fs::canonicalize(input)
+    let input = crate::paths::canonicalize(input)
         .with_context(|| format!("path not found: {}", input.display()))?;
 
     let (root, explicit_sln, explicit_csproj) = classify_input(&input)?;
@@ -97,7 +97,7 @@ fn collect_csproj_paths(
             Ok(content) => {
                 for project in parse_sln(&content) {
                     let candidate = sln_dir.join(&project.relative_path);
-                    match std::fs::canonicalize(&candidate) {
+                    match crate::paths::canonicalize(&candidate) {
                         Ok(path) => {
                             if seen.insert(path.clone()) {
                                 paths.push(path);
@@ -121,7 +121,7 @@ fn collect_csproj_paths(
     }
 
     for csproj in csproj_files {
-        if let Ok(path) = std::fs::canonicalize(csproj)
+        if let Ok(path) = crate::paths::canonicalize(csproj)
             && seen.insert(path.clone())
         {
             paths.push(path);
@@ -259,7 +259,7 @@ fn build_projects(
     for (index, refs) in raw_refs.iter().enumerate() {
         let root_dir = projects[index].root_dir.clone();
         for raw in refs {
-            if let Ok(target) = std::fs::canonicalize(root_dir.join(raw))
+            if let Ok(target) = crate::paths::canonicalize(&root_dir.join(raw))
                 && let Some(&target_id) = id_by_path.get(&target)
             {
                 projects[index].project_refs.push(target_id);
