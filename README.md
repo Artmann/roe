@@ -1,9 +1,22 @@
+<div align="center">
+
 # roe
 
 Codebase intelligence for C#. Finds dead code — unused types, members, and
 files — and duplicated code, so you can delete what's unused and de-duplicate
 what's copy-pasted. Static analysis only; roe never runs the code it
 analyzes.
+
+[![npm](https://img.shields.io/npm/v/roe-cli)](https://www.npmjs.com/package/roe-cli)
+[![NuGet](https://img.shields.io/nuget/v/roe)](https://www.nuget.org/packages/roe/)
+[![CI](https://github.com/Artmann/roe/actions/workflows/ci.yml/badge.svg)](https://github.com/Artmann/roe/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
+[Install](#install) · [Commands](#commands) · [Releases](https://github.com/Artmann/roe/releases) · [Contributing](CONTRIBUTING.md)
+
+</div>
+
+---
 
 ```
 $ roe dead-code path/to/solution
