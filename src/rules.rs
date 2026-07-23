@@ -35,6 +35,12 @@ pub fn apply_kill_list(
                     flags |= SymbolFlags::LIVE_WITH_TYPE;
                 }
 
+                // Deconstruct: invoked implicitly by `var (a, b) = expr;`
+                // deconstruction syntax — never named at the call site.
+                if kind == MemberKind::Method && rodeo.resolve(&symbol.name) == "Deconstruct" {
+                    flags |= SymbolFlags::LIVE_WITH_TYPE;
+                }
+
                 // Called via base-class or interface dispatch.
                 if symbol.modifiers.contains(Modifiers::OVERRIDE)
                     || symbol.is_explicit_interface_impl
