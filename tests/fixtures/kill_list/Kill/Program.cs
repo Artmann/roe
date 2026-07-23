@@ -34,6 +34,8 @@ public static class Program
 
         var host = new ClusterHost();
         var status = Status.Active;
+
+        var (a, b) = new Pair(1, 2);
     }
 
     private static void OnClicked(object sender, EventArgs e)

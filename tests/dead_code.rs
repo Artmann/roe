@@ -135,6 +135,7 @@ fn kill_list_keeps_every_false_positive_candidate() {
     // - SecuredThing ([Authorize] attribute-rooted), AuthorizeAttribute
     //   (attribute name shorthand)
     // - Status.Legacy (enum member, default mode)
+    // - Pair.Deconstruct (invoked implicitly by `var (a, b) = ...`)
     //
     // True positives that MUST appear:
     // - DeadService (type gate: live.Process() elsewhere must not save it)
