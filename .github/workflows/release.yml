@@ -3,7 +3,14 @@ name: Release
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Tag to build and publish (e.g. roe-v1.0.2). Use this to recover a
+          release that release-please tagged but could not build/publish
+          itself, without waiting for another push to main.
+        required: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,15 +31,42 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
 
+  resolve-release:
+    name: Resolve release to publish
+    needs: release-please
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.resolve.outputs.should_publish }}
+      tag_name: ${{ steps.resolve.outputs.tag_name }}
+    steps:
+      - name: Resolve
+        id: resolve
+        env:
+          MANUAL_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_CREATED: ${{ needs.release-please.outputs.release_created }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          if [ -n "${MANUAL_TAG}" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${MANUAL_TAG}" >> "$GITHUB_OUTPUT"
+          elif [ "${RELEASE_CREATED}" = "true" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "tag_name=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "tag_name=" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
     name: Test
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    needs: resolve-release
+    if: needs.resolve-release.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.resolve-release.outputs.tag_name }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -42,7 +76,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.target }})
-    needs: [release-please, test]
+    needs: [resolve-release, test]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -66,7 +100,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.resolve-release.outputs.tag_name }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -81,7 +115,7 @@ jobs:
       - name: Package archive (unix)
         if: runner.os != 'Windows'
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.resolve-release.outputs.tag_name }}
         run: |
           staging="roe-${TAG}-${{ matrix.target }}"
 
@@ -93,7 +127,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.resolve-release.outputs.tag_name }}
         run: |
           $staging = "roe-$env:TAG-${{ matrix.target }}"
 
@@ -119,7 +153,7 @@ jobs:
 
   publish-assets:
     name: Attach binaries to GitHub Release
-    needs: [release-please, build]
+    needs: [resolve-release, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -136,7 +170,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+          gh release upload "${{ needs.resolve-release.outputs.tag_name }}" \
             --repo "${GITHUB_REPOSITORY}" \
             roe-*.tar.gz roe-*.zip SHA256SUMS
 
@@ -145,7 +179,7 @@ jobs:
   # to point at this repository and this workflow file (release.yml).
   npm-publish:
     name: Publish npm package
-    needs: [release-please, build]
+    needs: [resolve-release, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -153,7 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.resolve-release.outputs.tag_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -170,7 +204,7 @@ jobs:
 
       - name: Assemble package
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.resolve-release.outputs.tag_name }}
         run: node packaging/npm/prepare.js "${TAG#*v}" binaries
 
       - name: Publish roe-cli
@@ -182,7 +216,7 @@ jobs:
   # (release.yml).
   nuget-publish:
     name: Publish NuGet package
-    needs: [release-please, build]
+    needs: [resolve-release, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -190,7 +224,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.resolve-release.outputs.tag_name }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -220,7 +254,7 @@ jobs:
 
       - name: Pack
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.resolve-release.outputs.tag_name }}
         run: |
           dotnet pack packaging/nuget/Roe.Tool.csproj \
             --configuration Release \
@@ -236,7 +270,7 @@ jobs:
       - name: Push
         env:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.resolve-release.outputs.tag_name }}
         run: |
           dotnet nuget push "packages/roe.${TAG#*v}.nupkg" \
             --api-key "${NUGET_API_KEY}" \
