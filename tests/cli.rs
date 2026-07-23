@@ -135,6 +135,17 @@ fn config_aggressive_true_takes_effect_without_cli_flag() {
 }
 
 #[test]
+fn library_flag_protects_a_named_project_despite_a_sibling_executable() {
+    let output = roe()
+        .args(["dead-code", &fixture("library_and_exe"), "--library", "Lib"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no dead code found"));
+}
+
+#[test]
 fn explicit_config_flag_overrides_auto_discovery() {
     let fixture_root = fixture("config_explicit");
     let output = roe()

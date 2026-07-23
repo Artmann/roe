@@ -37,6 +37,11 @@ pub struct DeadCodeArgs {
     #[arg(long = "root", value_name = "FQN")]
     pub roots: Vec<String>,
 
+    /// Project names to always treat in library mode (public API is used),
+    /// regardless of executables elsewhere in the workspace
+    #[arg(long = "library", value_name = "PROJECT")]
+    pub library_projects: Vec<String>,
+
     /// Path to an explicit roe.json/roe.yaml/roe.yml config (skips
     /// auto-discovery)
     #[arg(long, value_name = "PATH")]
