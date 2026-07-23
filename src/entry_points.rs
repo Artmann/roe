@@ -21,6 +21,28 @@ const INERT_ATTRIBUTES: &[&str] = &[
 /// Methods invoked reflectively by hosting conventions.
 const MAGIC_METHOD_NAMES: &[&str] = &["Main", "ConfigureServices", "Configure"];
 
+/// Compiler-synthesized polyfills for language features on older TFMs:
+/// referenced only by the compiler (emitted into IL), never from source, so
+/// reachability analysis can't see them. A dead-file report on them is
+/// always a false positive.
+const COMPILER_POLYFILL_FQNS: &[&str] = &[
+    "System.Runtime.CompilerServices.IsExternalInit",
+    "System.Runtime.CompilerServices.RequiredMemberAttribute",
+    "System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute",
+    "System.Runtime.CompilerServices.ModuleInitializerAttribute",
+    "System.Diagnostics.CodeAnalysis.AllowNullAttribute",
+    "System.Diagnostics.CodeAnalysis.DisallowNullAttribute",
+    "System.Diagnostics.CodeAnalysis.DoesNotReturnAttribute",
+    "System.Diagnostics.CodeAnalysis.DoesNotReturnIfAttribute",
+    "System.Diagnostics.CodeAnalysis.MaybeNullAttribute",
+    "System.Diagnostics.CodeAnalysis.MaybeNullWhenAttribute",
+    "System.Diagnostics.CodeAnalysis.MemberNotNullAttribute",
+    "System.Diagnostics.CodeAnalysis.MemberNotNullWhenAttribute",
+    "System.Diagnostics.CodeAnalysis.NotNullAttribute",
+    "System.Diagnostics.CodeAnalysis.NotNullIfNotNullAttribute",
+    "System.Diagnostics.CodeAnalysis.NotNullWhenAttribute",
+];
+
 /// Detect entry points and set ROOT (and TEST_ROOT) flags. Returns notes to
 /// surface in the report (e.g. library mode).
 pub fn mark_roots(
@@ -75,6 +97,10 @@ pub fn mark_roots(
         .map(|name| rodeo.get_or_intern(name))
         .collect();
     let startup = rodeo.get_or_intern("Startup");
+    let compiler_polyfill_fqns: Vec<lasso::Spur> = COMPILER_POLYFILL_FQNS
+        .iter()
+        .map(|fqn| rodeo.get_or_intern(fqn))
+        .collect();
 
     for index in 0..resolution.symbols.len() {
         let symbol = &resolution.symbols[index];
@@ -108,7 +134,12 @@ pub fn mark_roots(
             }
 
             SymbolKind::Type(_) => {
-                if is_controller(symbol, rodeo) || symbol.name == startup {
+                if is_controller(symbol, rodeo)
+                    || symbol.name == startup
+                    || symbol
+                        .fqn
+                        .is_some_and(|fqn| compiler_polyfill_fqns.contains(&fqn))
+                {
                     is_root = true;
                 }
             }
