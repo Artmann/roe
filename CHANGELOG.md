@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.0](https://github.com/Artmann/roe/compare/roe-v1.0.2...roe-v1.1.0) (2026-07-23)
+
+
+### Features
+
+* **dead-code:** Add --library / libraryProjects to force per-project library mode ([b0b6ee7](https://github.com/Artmann/roe/commit/b0b6ee7a57bd6aa8bbbc8c57bdb235c789070f69)), closes [#8](https://github.com/Artmann/roe/issues/8)
+
+
+### Bug Fixes
+
+* **dead-code:** Don't flag compiler polyfill types as dead files ([23b6808](https://github.com/Artmann/roe/commit/23b68089a6889a3777aecfdd0dee14274dbadeaa)), closes [#7](https://github.com/Artmann/roe/issues/7)
+* **dead-code:** Don't flag Deconstruct as an unused member ([84045e5](https://github.com/Artmann/roe/commit/84045e58c879d33ee5f1ef2ce03a7de9ad25ff12)), closes [#6](https://github.com/Artmann/roe/issues/6)
+* **dead-code:** Flatten dotted member-access chains to resolve nested types ([f681396](https://github.com/Artmann/roe/commit/f681396b67d88f8c6174ce6c3b3a597bff874ddb)), closes [#5](https://github.com/Artmann/roe/issues/5)
+* **release:** Apply the same always() guard to build and publish jobs ([b8f1a80](https://github.com/Artmann/roe/commit/b8f1a807a24386ba6e24f54e3ce81e9e8bebb583))
+* **release:** Don't let an unrelated release-please failure skip test ([3d1d59b](https://github.com/Artmann/roe/commit/3d1d59b4f5d8cd479cc436baf303b1a383bc2882))
+
 ## [1.0.2](https://github.com/Artmann/roe/compare/roe-v1.0.1...roe-v1.0.2) (2026-07-23)
 
 
