@@ -163,11 +163,20 @@ impl<'a> Walker<'a> {
                 }
             }
             "member_access_expression" | "member_binding_expression" => {
-                if let Some(name) = node.child_by_field_name("name") {
-                    self.emit_member_name(name);
-                }
-                if let Some(expression) = node.child_by_field_name("expression") {
-                    self.walk(expression, false);
+                if node.kind() == "member_access_expression"
+                    && let Some(path) = self.try_flatten_dotted_path(node)
+                {
+                    // A.B.C — try the whole chain as a type/namespace path so
+                    // intermediate containers (nested types) resolve like a
+                    // qualified name, not just the leaf member.
+                    self.emit(RawRefKind::Ambient, path);
+                } else {
+                    if let Some(name) = node.child_by_field_name("name") {
+                        self.emit_member_name(name);
+                    }
+                    if let Some(expression) = node.child_by_field_name("expression") {
+                        self.walk(expression, false);
+                    }
                 }
             }
             "attribute" => self.attribute_ref(node),
@@ -248,6 +257,36 @@ impl<'a> Walker<'a> {
                 .map(|n| self.name_path(n))
                 .unwrap_or_default(),
             _ => NamePath::new(),
+        }
+    }
+
+    /// Flatten a chain of `member_access_expression` nodes rooted in a plain
+    /// identifier (`A.B.C`) into one dotted path, so it can be tried as a
+    /// type/namespace path the same way `qualified_name` is. Returns `None`
+    /// as soon as a link isn't a bare identifier (a call, indexer, `this`,
+    /// generic name, ...) — those keep falling through to the ordinary
+    /// per-segment member-access walk.
+    fn try_flatten_dotted_path(&self, node: Node) -> Option<NamePath> {
+        match node.kind() {
+            "identifier" => {
+                let text = self.text(node);
+                if matches!(text, "var" | "nameof" | "global" | "dynamic" | "_") {
+                    None
+                } else {
+                    Some(smallvec![self.intern(text)])
+                }
+            }
+            "member_access_expression" => {
+                let name = node.child_by_field_name("name")?;
+                if name.kind() != "identifier" {
+                    return None;
+                }
+                let expression = node.child_by_field_name("expression")?;
+                let mut path = self.try_flatten_dotted_path(expression)?;
+                path.push(self.intern(self.text(name)));
+                Some(path)
+            }
+            _ => None,
         }
     }
 
@@ -858,17 +897,46 @@ class C
         );
         let refs = ref_names(&facts, &rodeo);
         assert!(refs.contains(&"Greeter".to_string()));
-        assert!(refs.contains(&"WriteLine".to_string()));
-        assert!(refs.contains(&"Greet".to_string()));
+        // Console.WriteLine and g.Greet are dotted identifier chains, so they
+        // flatten into one path each (see try_flatten_dotted_path) rather
+        // than separate Console/WriteLine and Greet references.
+        assert!(refs.contains(&"Console.WriteLine".to_string()));
+        assert!(refs.contains(&"g.Greet".to_string()));
         assert!(refs.contains(&"Helper".to_string()));
-        assert!(refs.contains(&"Console".to_string()));
 
         let write_line = facts
             .refs
             .iter()
             .find(|r| rodeo.resolve(r.path.last().unwrap()) == "WriteLine")
             .unwrap();
-        assert_eq!(write_line.kind, RawRefKind::Member);
+        assert_eq!(write_line.kind, RawRefKind::Ambient);
+    }
+
+    #[test]
+    fn nested_static_class_member_access_flattens_to_one_path() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M()
+    {
+        var x = Tuning.Scores.Base;
+    }
+}
+"#,
+        );
+        let path = facts
+            .refs
+            .iter()
+            .find(|r| rodeo.resolve(r.path.last().unwrap()) == "Base")
+            .map(|r| {
+                r.path
+                    .iter()
+                    .map(|spur| rodeo.resolve(spur).to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        assert_eq!(path, vec!["Tuning", "Scores", "Base"]);
     }
 
     #[test]
@@ -920,8 +988,10 @@ class C
         let refs = ref_names(&facts, &rodeo);
         assert!(refs.contains(&"Fact".to_string()));
         assert!(refs.contains(&"Migration001".to_string()));
-        assert!(refs.contains(&"Order".to_string()));
-        assert!(refs.contains(&"Total".to_string()));
+        // Order.Total flattens into one dotted path (see
+        // try_flatten_dotted_path) so the intermediate Order type resolves
+        // too, not just the leaf member.
+        assert!(refs.contains(&"Order.Total".to_string()));
 
         let fact = facts
             .refs

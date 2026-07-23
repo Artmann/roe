@@ -98,6 +98,14 @@ fn generated_files_are_reference_only_and_never_flagged() {
 }
 
 #[test]
+fn nested_static_class_reached_via_qualified_member_access_is_not_dead() {
+    // Tuning.Scores.Base: value-position access through a nested static
+    // class. Scores must resolve like a qualified type path, not just the
+    // leaf Base member, or it's reported as an unused type.
+    assert_findings(findings("nested_static_class", false), vec![]);
+}
+
+#[test]
 fn partial_types_merge_across_files() {
     // Widget: one part referenced → nothing in either part flagged (Pong is
     // exempt: without obj/ the generated half of partials is invisible).
