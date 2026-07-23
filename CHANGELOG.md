@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/Artmann/roe/compare/roe-v1.0.1...roe-v1.0.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* **release:** Publish to NuGet via trusted publishing instead of an API key ([7f2343a](https://github.com/Artmann/roe/commit/7f2343aeb2667a4b0331d22b17cd2d601fa8b3ad))
+
 ## [1.0.1](https://github.com/Artmann/roe/compare/roe-v1.0.0...roe-v1.0.1) (2026-07-23)
 
 
