@@ -106,6 +106,14 @@ fn nested_static_class_reached_via_qualified_member_access_is_not_dead() {
 }
 
 #[test]
+fn compiler_polyfills_are_never_flagged_dead() {
+    // IsExternalInit is a hand-written polyfill needed for `init` accessors
+    // on netstandard2.1 — only the compiler references it (emitted into IL),
+    // so it must never be reported as an unused file/type.
+    assert_findings(findings("compiler_polyfills", false), vec![]);
+}
+
+#[test]
 fn partial_types_merge_across_files() {
     // Widget: one part referenced → nothing in either part flagged (Pong is
     // exempt: without obj/ the generated half of partials is invisible).
