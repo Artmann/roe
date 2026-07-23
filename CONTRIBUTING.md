@@ -86,23 +86,3 @@ triggered on every push to `main`:
    release-please just created, and publish `roe` to NuGet and `roe-cli` to
    npm. On a normal push with no release pending, those jobs are skipped and
    only `release-please` runs.
-
-No extra token is needed — everything after the version-bump commit merges
-happens within the same workflow run (not a separately triggered one), so the
-default `GITHUB_TOKEN` is enough even for the tag/release step. npm still
-authenticates via trusted publishing (OIDC) and NuGet via the `NUGET_API_KEY`
-secret, unchanged.
-
-The first release (`1.0.0`) is pinned via `release-as` in
-`release-please-config.json`, since there's no prior tag for release-please
-to compute a bump from. Remove that `release-as` override once the `1.0.0`
-release PR has merged — after that, versions should always come from
-conventional commits.
-
-npm publishing authenticates with [trusted publishing](https://docs.npmjs.com/trusted-publishers)
-(OIDC, no token). npm can't create a package via OIDC, so bootstrapping a
-fresh registry requires publishing a `0.0.0` placeholder once with a granular
-token (`npm publish` from `packaging/npm/roe-cli`), then configuring the
-trusted publisher on the package's npmjs.com settings page: repository
-`Artmann/roe`, workflow `release.yml`. NuGet publishing uses the
-`NUGET_API_KEY` repository secret.

@@ -175,10 +175,17 @@ jobs:
       - name: Publish roe-cli
         run: npm publish packaging/npm/build/roe-cli --access public
 
+  # Authenticates via NuGet trusted publishing (OIDC) — no API key secret.
+  # The trusted publisher policy for the roe package must be configured on
+  # nuget.org to point at this repository and this workflow file
+  # (release.yml).
   nuget-publish:
     name: Publish NuGet package
     needs: [release-please, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -219,10 +226,17 @@ jobs:
             --output packages \
             "-p:Version=${TAG#*v}"
 
+      - name: Authenticate with NuGet
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: Artmann
+
       - name: Push
         env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           dotnet nuget push "packages/roe.${TAG#*v}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --api-key "${NUGET_API_KEY}" \
             --source https://api.nuget.org/v3/index.json
