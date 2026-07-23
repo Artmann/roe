@@ -1,6 +1,6 @@
 [package]
 name = "roe"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "Codebase intelligence for C# — dead code and duplicate detection"
 license = "MIT"
