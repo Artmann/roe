@@ -20,7 +20,12 @@ pub struct Analysis {
 /// The full dead-code pipeline: discover → extract → symbol table → kill
 /// list → entry points → graph → reachability → detectors → inline
 /// suppressions.
-pub fn analyze(root: &Path, aggressive: bool, manual_roots: &[String]) -> anyhow::Result<Analysis> {
+pub fn analyze(
+    root: &Path,
+    aggressive: bool,
+    manual_roots: &[String],
+    library_projects: &[String],
+) -> anyhow::Result<Analysis> {
     let start = Instant::now();
 
     let mut workspace = discover::discover(root)?;
@@ -31,7 +36,14 @@ pub fn analyze(root: &Path, aggressive: bool, manual_roots: &[String]) -> anyhow
 
     rules::apply_kill_list(&mut resolution, &workspace, &rodeo, aggressive);
 
-    let notes = entry_points::mark_roots(&mut resolution, &workspace, &facts, manual_roots, &rodeo);
+    let notes = entry_points::mark_roots(
+        &mut resolution,
+        &workspace,
+        &facts,
+        manual_roots,
+        library_projects,
+        &rodeo,
+    );
 
     let symbol_graph = graph::build_graph(&mut resolution, &workspace, &facts, &rodeo);
     let roots: Vec<SymbolId> = resolution
@@ -84,9 +96,15 @@ pub fn run(args: &DeadCodeArgs) -> anyhow::Result<ExitCode> {
         resolved_config.as_ref().map(|r| &r.config),
         args.aggressive,
         &args.roots,
+        &args.library_projects,
     );
 
-    let mut analysis = analyze(&root, effective.aggressive, &effective.roots)?;
+    let mut analysis = analyze(
+        &root,
+        effective.aggressive,
+        &effective.roots,
+        &effective.library_projects,
+    )?;
     analysis.workspace.warnings.append(&mut config_warnings);
 
     if let Some(resolved) = &resolved_config

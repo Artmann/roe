@@ -50,6 +50,7 @@ pub fn mark_roots(
     workspace: &Workspace,
     facts: &[FileFacts],
     manual_roots: &[String],
+    library_projects: &[String],
     rodeo: &ThreadedRodeo,
 ) -> Vec<String> {
     let mut notes = Vec::new();
@@ -155,10 +156,12 @@ pub fn mark_roots(
 
         // Public surface is the contract for shipping code: everything in
         // library mode (except test projects — their publics are not an
-        // external contract), and packable projects always (they publish to
-        // NuGet regardless of what else lives in the workspace).
-        let public_is_contract =
-            (library_mode && !in_test_project) || project.is_some_and(|p| p.is_packable);
+        // external contract), packable projects always (they publish to
+        // NuGet regardless of what else lives in the workspace), and any
+        // project named via --library/libraryProjects (consumed outside the
+        // workspace, e.g. by a Unity project referencing the built DLL).
+        let public_is_contract = (library_mode && !in_test_project)
+            || project.is_some_and(|p| p.is_packable || library_projects.contains(&p.name));
         if public_is_contract && symbol.is_public_surface() && parents_are_public(resolution, index)
         {
             is_root = true;

@@ -11,7 +11,7 @@ fn fixture(name: &str) -> PathBuf {
 
 /// Sorted (kind, name) pairs for stable assertions.
 fn findings(name: &str, aggressive: bool) -> Vec<(FindingKind, String)> {
-    let analysis = analyze(&fixture(name), aggressive, &[]).expect("analysis should succeed");
+    let analysis = analyze(&fixture(name), aggressive, &[], &[]).expect("analysis should succeed");
     let mut pairs: Vec<(FindingKind, String)> = analysis
         .result
         .findings
@@ -114,6 +114,29 @@ fn compiler_polyfills_are_never_flagged_dead() {
 }
 
 #[test]
+fn executable_sibling_disables_library_mode_for_the_whole_workspace() {
+    // Without --library, App's presence disables library mode workspace-wide
+    // even though Lib is never referenced from inside the workspace — proves
+    // the fixture reproduces the bug before checking the fix below.
+    assert_findings(
+        findings("library_and_exe", false),
+        vec![file("Lib/PublicApi.cs")],
+    );
+}
+
+#[test]
+fn library_projects_flag_protects_a_named_project_despite_a_sibling_executable() {
+    let analysis = analyze(
+        &fixture("library_and_exe"),
+        false,
+        &[],
+        &["Lib".to_string()],
+    )
+    .expect("analysis should succeed");
+    assert!(analysis.result.findings.is_empty());
+}
+
+#[test]
 fn partial_types_merge_across_files() {
     // Widget: one part referenced → nothing in either part flagged (Pong is
     // exempt: without obj/ the generated half of partials is invisible).
@@ -187,6 +210,7 @@ fn manual_roots_rescue_symbols() {
         &fixture("console_app"),
         false,
         &["ConsoleApp.ConsoleGreeter.UnusedHelper".to_string()],
+        &[],
     )
     .expect("analysis should succeed");
     let names: Vec<&str> = analysis
@@ -200,7 +224,7 @@ fn manual_roots_rescue_symbols() {
 
 #[test]
 fn nonexistent_path_errors() {
-    assert!(analyze(&fixture("does_not_exist"), false, &[]).is_err());
+    assert!(analyze(&fixture("does_not_exist"), false, &[], &[]).is_err());
 }
 
 #[test]

@@ -11,6 +11,10 @@ use serde::Deserialize;
 pub struct RoeConfig {
     pub aggressive: Option<bool>,
     pub roots: Option<Vec<String>>,
+    /// Project names to always treat in library mode (public API is used),
+    /// regardless of executables elsewhere in the workspace.
+    #[serde(rename = "libraryProjects")]
+    pub library_projects: Option<Vec<String>>,
     /// Glob patterns (relative to this config file's directory) whose
     /// matching files have all their findings suppressed. A pattern ending in
     /// `/` also matches everything under that directory.
@@ -116,16 +120,18 @@ fn parse(path: &Path, content: &str) -> anyhow::Result<RoeConfig> {
 pub struct EffectiveArgs {
     pub aggressive: bool,
     pub roots: Vec<String>,
+    pub library_projects: Vec<String>,
 }
 
 /// `aggressive` is OR'd because clap's plain bool flag can only ever be
 /// explicitly `true` — there's no `--no-aggressive` to override a config's
-/// `true` back to `false`. `roots`, when passed on the CLI, replaces the
-/// config's list wholesale rather than merging with it.
+/// `true` back to `false`. `roots` and `library_projects`, when passed on the
+/// CLI, replace the config's list wholesale rather than merging with it.
 pub fn merge(
     config: Option<&RoeConfig>,
     cli_aggressive: bool,
     cli_roots: &[String],
+    cli_library_projects: &[String],
 ) -> EffectiveArgs {
     let config_aggressive = config.and_then(|c| c.aggressive).unwrap_or(false);
     let roots = if !cli_roots.is_empty() {
@@ -133,9 +139,17 @@ pub fn merge(
     } else {
         config.and_then(|c| c.roots.clone()).unwrap_or_default()
     };
+    let library_projects = if !cli_library_projects.is_empty() {
+        cli_library_projects.to_vec()
+    } else {
+        config
+            .and_then(|c| c.library_projects.clone())
+            .unwrap_or_default()
+    };
     EffectiveArgs {
         aggressive: cli_aggressive || config_aggressive,
         roots,
+        library_projects,
     }
 }
 
@@ -185,7 +199,7 @@ mod tests {
             aggressive: Some(false),
             ..Default::default()
         };
-        assert!(merge(Some(&config), true, &[]).aggressive);
+        assert!(merge(Some(&config), true, &[], &[]).aggressive);
     }
 
     #[test]
@@ -194,12 +208,12 @@ mod tests {
             aggressive: Some(true),
             ..Default::default()
         };
-        assert!(merge(Some(&config), false, &[]).aggressive);
+        assert!(merge(Some(&config), false, &[], &[]).aggressive);
     }
 
     #[test]
     fn merge_defaults_aggressive_to_false() {
-        assert!(!merge(None, false, &[]).aggressive);
+        assert!(!merge(None, false, &[], &[]).aggressive);
     }
 
     #[test]
@@ -210,7 +224,7 @@ mod tests {
         };
         let cli_roots = vec!["Cli.Root".to_string()];
         assert_eq!(
-            merge(Some(&config), false, &cli_roots).roots,
+            merge(Some(&config), false, &cli_roots, &[]).roots,
             vec!["Cli.Root".to_string()]
         );
     }
@@ -222,14 +236,44 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            merge(Some(&config), false, &[]).roots,
+            merge(Some(&config), false, &[], &[]).roots,
             vec!["Config.Root".to_string()]
         );
     }
 
     #[test]
     fn merge_defaults_roots_to_empty() {
-        assert!(merge(None, false, &[]).roots.is_empty());
+        assert!(merge(None, false, &[], &[]).roots.is_empty());
+    }
+
+    #[test]
+    fn merge_cli_library_projects_override_config_library_projects() {
+        let config = RoeConfig {
+            library_projects: Some(vec!["Config.Lib".to_string()]),
+            ..Default::default()
+        };
+        let cli_library_projects = vec!["Cli.Lib".to_string()];
+        assert_eq!(
+            merge(Some(&config), false, &[], &cli_library_projects).library_projects,
+            vec!["Cli.Lib".to_string()]
+        );
+    }
+
+    #[test]
+    fn merge_falls_back_to_config_library_projects() {
+        let config = RoeConfig {
+            library_projects: Some(vec!["Config.Lib".to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            merge(Some(&config), false, &[], &[]).library_projects,
+            vec!["Config.Lib".to_string()]
+        );
+    }
+
+    #[test]
+    fn merge_defaults_library_projects_to_empty() {
+        assert!(merge(None, false, &[], &[]).library_projects.is_empty());
     }
 
     #[test]
