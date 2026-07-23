@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/Artmann/roe/compare/roe-v1.0.0...roe-v1.0.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **release:** Trigger a release to validate the corrected tag parsing ([aff28c5](https://github.com/Artmann/roe/commit/aff28c5daf202f07a6427fa53b5e3c70ca271cd9))
+
 ## [1.0.0](https://github.com/Artmann/roe/compare/roe-v0.1.0...roe-v1.0.0) (2026-07-22)
 
 
