@@ -61,7 +61,7 @@ jobs:
   test:
     name: Test
     needs: resolve-release
-    if: needs.resolve-release.outputs.should_publish == 'true'
+    if: always() && needs.resolve-release.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
