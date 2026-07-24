@@ -7,6 +7,12 @@ tests/fixtures/**/obj/
 # insta pending-review diffs
 *.snap.new
 
+# static analysis output — cargo llvm-cov, cargo mutants, clippy-sarif
+/lcov.info
+/mutants.out/
+/mutants.out.old/
+/results.sarif
+
 # packaging build output — assembled by CI at release time
 packaging/npm/build/
 packaging/nuget/bin/

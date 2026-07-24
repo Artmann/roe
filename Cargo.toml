@@ -8,6 +8,12 @@ repository = "https://github.com/Artmann/roe"
 keywords = ["csharp", "dead-code", "duplicates", "static-analysis"]
 categories = ["command-line-utilities", "development-tools"]
 
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+
 [profile.release]
 codegen-units = 1
 lto = true

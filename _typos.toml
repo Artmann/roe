@@ -1,0 +1,10 @@
+[files]
+# Fixtures are hand-written C# solutions full of deliberately odd identifiers,
+# snapshots are generated from them, and Cargo.lock is machine-owned.
+extend-exclude = ["Cargo.lock", "tests/fixtures/", "tests/snapshots/"]
+
+[default.extend-identifiers]
+# Deliberate misspelling of the `aggressive` config field, used by
+# `rejects_unknown_fields` in src/config.rs to prove serde rejects near-miss
+# keys instead of silently ignoring them.
+agressive = "agressive"

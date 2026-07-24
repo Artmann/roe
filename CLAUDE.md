@@ -10,7 +10,7 @@
 - Use entire words as variable names. This is not Go. For example `request` instead of `req`.
 - Use punctuation.
 - Use whitespace to break up code to make it easier to read. Put a blank like after const groups and control flows and before return statements.
-- Order things in alphabetical order by default. If applicable order by accessiblity level first, then alphabetical order.
+- Order things in alphabetical order by default. If applicable order by accessibility level first, then alphabetical order.
 - No Floating Promises: Always await or handle promises
 - Always use bracers for control statements.
 
