@@ -1,0 +1,53 @@
+---
+title: "roe dupes"
+description: "Find copy-pasted and copy-pasted-and-renamed code blocks."
+icon: "clone"
+---
+
+Finds duplicated — copy-pasted, and optionally copy-pasted-and-renamed —
+blocks of code across your solution.
+
+```bash
+roe dupes [PATH]
+```
+
+```text
+2 occurrences (105 tokens, 24 lines)
+  src/App/Billing/PaymentService.cs:40:5-63:6
+  src/App/Shipping/ShippingService.cs:38:5-61:6
+
+found 1 duplicate group · 48 duplicated lines — 1 project(s), 214 file(s) scanned in 61 ms
+```
+
+## Options
+
+| Option | Description |
+| --- | --- |
+| `PATH` | Path to the codebase root — a directory, `.sln` file, or `.csproj` file. Defaults to the current directory. |
+| `-f, --format <human\|json>` | Output format. Defaults to `human`; `json` emits the stable v1 schema described in [JSON output](/reference/json-output). |
+| `--mode <exact\|semantic>` | Matching mode. Defaults to `exact`. |
+| `--no-code` | Hide the duplicated source code printed under each group (human format only). |
+| `--min-tokens <N>` | Minimum token-run length for a match to be reported. Defaults to `50`. |
+| `--min-lines <N>` | Minimum line span (of the shortest occurrence) for a match to be reported. Defaults to `5`. |
+| `--min-occurrences <N>` | Minimum number of occurrences for a match to be reported. Defaults to `2`. |
+| `--config <PATH>` | Use this `roe.json`/`roe.yaml`/`roe.yml` instead of [auto-discovery](/configuration). |
+
+## Exact vs. semantic mode
+
+By default, `roe dupes` only matches code that's identical token-for-token.
+Pass `--mode semantic` to also catch blocks that were copied and then had
+their variable names or numeric literals changed, but are otherwise
+structurally the same: identifiers and numeric literals are normalized to a
+shared placeholder before matching, while string literals, keywords, and
+punctuation always keep their exact text.
+
+```bash
+roe dupes --mode semantic path/to/solution
+```
+
+## Ignoring files
+
+Duplicates span multiple files, so there's no inline suppression comment for
+them. Instead, use the `ignore` glob list in a
+[config file](/configuration) — it applies to `roe dupes` as well as
+`roe dead-code`, dropping every finding in matching files.

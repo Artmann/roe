@@ -1,0 +1,61 @@
+---
+title: "Configuration"
+description: "Configure roe with roe.json or roe.yaml."
+icon: "gear"
+---
+
+roe reads an optional config file named `roe.json`, `roe.yaml`, or
+`roe.yml`. It's resolved by walking up from the analysis root to the nearest
+directory containing one (like `.eslintrc`/`tsconfig.json`), or pointed to
+explicitly with `--config`:
+
+```bash
+roe dead-code --config path/to/roe.json
+```
+
+If a directory contains more than one candidate, roe warns and `roe.json`
+wins. An explicit `--config` path that's missing or malformed is a hard
+error.
+
+## Fields
+
+```json roe.json
+{
+  "aggressive": true,
+  "roots": ["MyApp.Program.Main"],
+  "libraryProjects": ["MyLib"],
+  "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"]
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `aggressive` | boolean | Also flag enum members and public settable auto-properties. Default for the `--aggressive` flag. |
+| `roots` | string[] | Fully-qualified symbol names to treat as extra entry-point roots. Default for `--root`. |
+| `libraryProjects` | string[] | Project names to always treat in library mode (public API counts as used). Default for `--library`. |
+| `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to both `dead-code` and `dupes`. |
+
+Unknown fields are rejected, so a typo fails loudly instead of being
+silently ignored.
+
+## Ignore globs
+
+`ignore` patterns are resolved relative to the config file's own directory.
+A trailing `/` matches the whole directory, so `"Generated/"` needs no `**`.
+Patterns containing `..` are unsupported and produce a warning.
+
+The same `ignore` list also applies to `roe dupes`, since a duplicate spans
+multiple files and doesn't map cleanly onto a single-line
+[inline suppression comment](/suppressing-findings).
+
+## Precedence
+
+For `aggressive`, `roots`, and `libraryProjects`: an explicit
+`--aggressive`, `--root`, or `--library` flag always wins, otherwise the
+config's value applies, otherwise the built-in default (`false` / no extra
+roots / no extra library projects).
+
+Two nuances: `--aggressive` can only turn the setting on — there is no
+`--no-aggressive` to override a config's `"aggressive": true`. And passing
+`--root` or `--library` replaces the config's list wholesale rather than
+merging with it.

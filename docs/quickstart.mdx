@@ -1,0 +1,60 @@
+---
+title: "Quickstart"
+description: "Run your first dead-code and duplicate scan in two minutes."
+icon: "bolt"
+---
+
+Both roe commands take a path to a directory, a `.sln` file, or a `.csproj`
+file, and default to the current directory. There's nothing to configure up
+front — point roe at your solution and read the report.
+
+<Steps>
+  <Step title="Scan for dead code">
+    ```bash
+    roe dead-code path/to/solution
+    ```
+
+    ```text
+    src/App/Services/LegacyExporter.cs (App)
+          1:1  dead file      every declaration in this file is unused
+
+    src/App/Billing/InvoiceService.cs (App)
+        88:17  unused member  App.Billing.InvoiceService.RecalculateAll (private method)
+
+    found 1 dead file · 0 unused types · 1 unused member — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 74 ms
+    ```
+
+    Every finding is something roe believes is unreachable from your
+    solution's [entry points](/concepts/entry-points) — safe to delete, or a
+    false positive worth [suppressing](/suppressing-findings).
+  </Step>
+  <Step title="Scan for duplicated code">
+    ```bash
+    roe dupes path/to/solution
+    ```
+
+    ```text
+    2 occurrences (105 tokens, 24 lines)
+      src/App/Billing/PaymentService.cs:40:5-63:6
+      src/App/Shipping/ShippingService.cs:38:5-61:6
+
+    found 1 duplicate group · 48 duplicated lines — 1 project(s), 214 file(s) scanned in 61 ms
+    ```
+
+    By default only token-for-token identical blocks match; pass
+    `--mode semantic` to also catch copies where variable names or numeric
+    literals were changed.
+  </Step>
+  <Step title="Wire it into scripts or CI">
+    Both commands exit `0` when clean, `1` when they have findings to
+    report, and `2` on error, and both support `--format json` for a stable,
+    machine-readable report. See [Exit codes](/reference/exit-codes) and
+    [JSON output](/reference/json-output).
+  </Step>
+  <Step title="Tune out false positives">
+    Mark individual findings with
+    [inline suppression comments](/suppressing-findings), or set up a
+    [`roe.json` config file](/configuration) to ignore whole directories and
+    declare extra entry points.
+  </Step>
+</Steps>

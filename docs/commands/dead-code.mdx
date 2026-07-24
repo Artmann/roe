@@ -1,0 +1,71 @@
+---
+title: "roe dead-code"
+description: "Find unused types, members, and files in a C# solution."
+icon: "skull"
+---
+
+Finds unused types, members, and files. roe builds a map of what references
+what across your solution, starting from known entry points, and reports
+anything that's unreachable.
+
+```bash
+roe dead-code [PATH]
+```
+
+```text
+src/App/Services/LegacyExporter.cs (App)
+      1:1  dead file      every declaration in this file is unused
+
+src/App/Billing/InvoiceService.cs (App)
+    88:17  unused member  App.Billing.InvoiceService.RecalculateAll (private method)
+
+found 1 dead file · 0 unused types · 1 unused member — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 74 ms
+```
+
+## Options
+
+| Option | Description |
+| --- | --- |
+| `PATH` | Path to the codebase root — a directory, `.sln` file, or `.csproj` file. Defaults to the current directory. |
+| `-f, --format <human\|json>` | Output format. Defaults to `human`; `json` emits the stable v1 schema described in [JSON output](/reference/json-output). |
+| `--aggressive` | Also flag enum members and public settable auto-properties, which are skipped by default as likely serializer fodder. |
+| `--root <FQN>` | Treat a symbol (by fully-qualified name) as an additional entry-point root. Repeatable. |
+| `--library <PROJECT>` | Always treat this project in library mode — its public API counts as used — regardless of executables elsewhere in the workspace. Repeatable. |
+| `--config <PATH>` | Use this `roe.json`/`roe.yaml`/`roe.yml` instead of [auto-discovery](/configuration). |
+
+Use `--root` for symbols that are only reached in ways roe can't see, such
+as string-based reflection:
+
+```bash
+roe dead-code --root App.Jobs.NightlyCleanupJob
+```
+
+Use `--library` for a project that's consumed outside the workspace — for
+example, a Unity project referencing the built DLL — so its public API is
+never flagged even though no executable in the workspace uses it:
+
+```bash
+roe dead-code --library MyLib
+```
+
+Both can also be set persistently in a [config file](/configuration).
+
+## What counts as an entry point
+
+Entry points are never flagged, and reachability is traced from them:
+`static Main` and top-level statements, ASP.NET controllers, test methods,
+declarations carrying attributes, reflection-scan contracts, the public API
+of packable and library-mode projects, and generated files. The full list is
+on [Entry points and roots](/concepts/entry-points).
+
+## What's never flagged individually
+
+To keep false positives rare, roe is tuned so that when in doubt, code is
+marked used — a missed finding is cheap, a wrong one is a bug. That means
+constructors, operators, indexers, and finalizers (invoked structurally);
+`override` members and explicit interface implementations (invoked via
+dispatch); members satisfying an in-source interface; visible members of
+types implementing external `I`-prefixed interfaces; and extension methods
+are never reported on their own. Public auto-properties and enum members are
+treated as serializer fodder and skipped by default — opt in with
+`--aggressive`.

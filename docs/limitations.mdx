@@ -1,0 +1,31 @@
+---
+title: "Known limitations"
+description: "What roe cannot see, by design or not yet."
+icon: "triangle-exclamation"
+---
+
+roe is a static, name-based analyzer — it never compiles or runs the code it
+analyzes. That keeps it fast and lets it work on codebases that don't build,
+but it comes with known blind spots:
+
+- **Name-based resolution conflates same-named symbols** — dead code hiding
+  behind a popular name is missed (by design; the safe direction).
+- **String-based reflection is invisible** —
+  `Activator.CreateInstance("…")`, `Type.GetType("…")`, and config-wired
+  type names can cause false positives; the attribute-root and scan-target
+  heuristics absorb the common cases, and [`--root`](/concepts/entry-points)
+  covers the rest.
+- **MSBuild `Condition` attributes are not evaluated** (all branches
+  included), `Directory.Build.props` is not read, and `InternalsVisibleTo`
+  is not modeled.
+- **Razor/`.cshtml` markup is not parsed** — build first so the generated
+  sources in `obj/` stand in for it.
+- **Compiler-synthesized calls are invisible** (e.g. range/index polyfills).
+- **`roe dupes` does not de-duplicate overlapping or nested occurrences** of
+  the same pattern repeated within a single long method — each is reported
+  as-is.
+
+When a limitation produces a false positive, mark it with an
+[inline suppression](/suppressing-findings), an
+[`ignore` glob](/configuration), or an extra
+[entry-point root](/concepts/entry-points).
