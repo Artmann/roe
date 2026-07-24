@@ -1,0 +1,103 @@
+---
+title: "JSON output"
+description: "Stable v1 machine-readable schemas for both commands."
+icon: "brackets-curly"
+---
+
+Both commands support `--format json` for machine-readable output. The
+schemas are versioned: `version` is `1`, and changes within v1 are additive
+only, so parsers can rely on the fields below. Keys are camelCase, optional
+fields are omitted when absent, and `file` paths are relative to `root`.
+
+## `roe dead-code --format json`
+
+```json
+{
+  "version": 1,
+  "root": "/path/to/solution",
+  "summary": {
+    "projects": 3,
+    "filesScanned": 214,
+    "symbols": 2610,
+    "unusedTypes": 0,
+    "unusedMembers": 1,
+    "unusedFiles": 1,
+    "elapsedMs": 74
+  },
+  "notes": [],
+  "findings": [
+    {
+      "kind": "unused-member",
+      "symbolKind": "method",
+      "name": "App.Billing.InvoiceService.RecalculateAll",
+      "project": "App",
+      "file": "src/App/Billing/InvoiceService.cs",
+      "line": 88,
+      "column": 17,
+      "visibility": "private"
+    }
+  ]
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `version` | Schema version, `1`. |
+| `root` | The analysis root path. |
+| `summary` | Scan totals: `projects`, `filesScanned`, `symbols`, `unusedTypes`, `unusedMembers`, `unusedFiles`, `elapsedMs`. |
+| `notes` | Human-readable notes about the scan, if any. |
+| `findings[].kind` | `unused-type`, `unused-member`, or `unused-file` — the same names used by [inline suppressions](/suppressing-findings). |
+| `findings[].symbolKind` | The kind of symbol (e.g. `method`). Optional. |
+| `findings[].name` | Fully-qualified symbol name, or the file path for a dead file. |
+| `findings[].project` | The containing project. Optional. |
+| `findings[].file`, `line`, `column` | Location of the finding; dead-file findings are pinned at `1:1`. |
+| `findings[].visibility` | The symbol's visibility (e.g. `private`). Optional. |
+
+## `roe dupes --format json`
+
+```json
+{
+  "version": 1,
+  "root": "/path/to/solution",
+  "mode": "exact",
+  "summary": {
+    "projects": 1,
+    "filesScanned": 214,
+    "groups": 1,
+    "duplicatedLines": 48,
+    "elapsedMs": 61
+  },
+  "groups": [
+    {
+      "tokenCount": 105,
+      "lineCount": 24,
+      "occurrences": [
+        {
+          "file": "src/App/Billing/PaymentService.cs",
+          "startLine": 40,
+          "startColumn": 5,
+          "endLine": 63,
+          "endColumn": 6
+        },
+        {
+          "file": "src/App/Shipping/ShippingService.cs",
+          "startLine": 38,
+          "startColumn": 5,
+          "endLine": 61,
+          "endColumn": 6
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `version` | Schema version, `1`. |
+| `root` | The analysis root path. |
+| `mode` | The matching mode used: `exact` or `semantic`. |
+| `summary` | Scan totals: `projects`, `filesScanned`, `groups`, `duplicatedLines`, `elapsedMs`. |
+| `groups[].tokenCount` | Length of the duplicated block in tokens. |
+| `groups[].lineCount` | Length of the duplicated block in lines. |
+| `groups[].occurrences[]` | Every location of the block: `file`, `startLine`, `startColumn`, `endLine`, `endColumn`. |

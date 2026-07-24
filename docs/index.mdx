@@ -1,0 +1,51 @@
+---
+title: "Introduction"
+description: "Codebase intelligence for C#: find dead code and duplicated code with static analysis."
+---
+
+roe finds dead code — unused types, members, and files — and duplicated code
+in C# solutions, so you can delete what's unused and de-duplicate what's
+copy-pasted. Static analysis only; roe never runs the code it analyzes.
+
+```text
+$ roe dead-code path/to/solution
+
+src/App/Services/LegacyExporter.cs (App)
+      1:1  dead file      every declaration in this file is unused
+
+src/App/Billing/InvoiceService.cs (App)
+    88:17  unused member  App.Billing.InvoiceService.RecalculateAll (private method)
+
+found 1 dead file · 0 unused types · 1 unused member — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 74 ms
+```
+
+## Two commands
+
+<CardGroup cols={2}>
+  <Card title="roe dead-code" icon="skull" href="/commands/dead-code">
+    Find unused types, members, and files by tracing reachability from your
+    solution's entry points.
+  </Card>
+  <Card title="roe dupes" icon="clone" href="/commands/dupes">
+    Find copy-pasted — and optionally copy-pasted-and-renamed — blocks of
+    code across your solution.
+  </Card>
+</CardGroup>
+
+Both commands accept a path to a directory, a `.sln` file, or a `.csproj`
+file, work on codebases that don't compile, and are tuned so that when in
+doubt, code is marked used — a missed finding is cheap, a wrong one is a bug.
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install roe with the .NET SDK, npm, or a prebuilt binary.
+  </Card>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Run your first dead-code and duplicate scan in two minutes.
+  </Card>
+</CardGroup>
+
+roe is open source under the MIT license — the code lives at
+[github.com/Artmann/roe](https://github.com/Artmann/roe).

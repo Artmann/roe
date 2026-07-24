@@ -1,0 +1,29 @@
+---
+title: "Exit codes"
+description: "How to use roe in scripts and CI."
+icon: "terminal"
+---
+
+Both `roe dead-code` and `roe dupes` use the same exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Clean — no findings. |
+| `1` | Findings were reported. |
+| `2` | Error — a message is printed to stderr as `error: …`. |
+
+Warnings (for example, about ambiguous config files) go to stderr as
+`warning: …` and don't affect the exit code.
+
+## In CI
+
+Because findings exit with `1`, roe fails a CI step out of the box:
+
+```yaml
+- name: Check for dead code
+  run: roe dead-code . --format json > dead-code-report.json
+```
+
+Combine with [`--format json`](/reference/json-output) to post-process the
+report, or with a [config file](/configuration) checked into the repository
+to keep suppressions and ignore globs consistent between local runs and CI.

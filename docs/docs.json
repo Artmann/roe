@@ -1,0 +1,47 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "roe",
+  "colors": {
+    "primary": "#16A34A",
+    "light": "#22C55E",
+    "dark": "#15803D"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting started",
+        "pages": ["index", "installation", "quickstart"]
+      },
+      {
+        "group": "Commands",
+        "pages": ["commands/dead-code", "commands/dupes"]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "configuration",
+          "suppressing-findings",
+          "concepts/entry-points"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": ["reference/json-output", "reference/exit-codes", "limitations"]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/Artmann/roe"
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Artmann/roe"
+    }
+  }
+}

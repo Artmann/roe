@@ -1,0 +1,70 @@
+---
+title: "Installation"
+description: "Install roe with the .NET SDK, npm, or prebuilt binaries."
+icon: "download"
+---
+
+<Tabs>
+  <Tab title=".NET SDK (recommended)">
+    With the .NET SDK 8.0 or later:
+
+    ```bash
+    dotnet tool install --global roe
+    ```
+
+    Or run it one-shot without installing (.NET 10 SDK or later):
+
+    ```bash
+    dnx roe dead-code .
+    ```
+  </Tab>
+  <Tab title="npm">
+    ```bash
+    npm install --global roe-cli
+    ```
+
+    The npm package is called `roe-cli` (the name `roe` was already taken on
+    npm), but the command it installs is still `roe`. To run it one-shot
+    without installing:
+
+    ```bash
+    npx roe-cli dead-code .
+    ```
+  </Tab>
+  <Tab title="Prebuilt binaries">
+    Prebuilt binaries for Linux (x64/arm64), macOS (x64/arm64), and Windows
+    (x64) are attached to
+    [GitHub Releases](https://github.com/Artmann/roe/releases), alongside a
+    `SHA256SUMS` file for verification.
+
+    <Warning>
+      macOS quarantines binaries downloaded with a browser; clear the
+      quarantine before running:
+
+      ```bash
+      xattr -d com.apple.quarantine ./roe
+      ```
+    </Warning>
+  </Tab>
+  <Tab title="From source">
+    roe is written in Rust. Clone the repository and build with Cargo:
+
+    ```bash
+    git clone https://github.com/Artmann/roe.git
+    cd roe
+    cargo build --release
+    ```
+
+    See
+    [CONTRIBUTING.md](https://github.com/Artmann/roe/blob/main/CONTRIBUTING.md)
+    for building, testing, and release details.
+  </Tab>
+</Tabs>
+
+## Verify the install
+
+```bash
+roe --version
+```
+
+Next up: the [Quickstart](/quickstart).
