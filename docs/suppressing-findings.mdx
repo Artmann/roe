@@ -27,7 +27,9 @@ public void DoWork()
 `roe-ignore-line` suppresses one on the same line.
 
 Both take an optional comma-separated rule list — omitting it suppresses any
-finding kind on that line:
+finding kind on that line.
+
+For [`roe dead-code`](/commands/dead-code):
 
 | Rule | Suppresses |
 | --- | --- |
@@ -35,18 +37,38 @@ finding kind on that line:
 | `unused-member` | An unused member finding. |
 | `unused-file` | A dead file finding. |
 
+For [`roe health`](/commands/health):
+
+| Rule | Suppresses |
+| --- | --- |
+| `high-complexity` | A cyclomatic complexity finding. |
+| `high-cognitive-complexity` | A cognitive complexity finding. |
+| `long-method` | A long method body finding. |
+| `too-many-parameters` | An over-parameterized method finding. |
+| `large-file` | A large file finding. |
+| `large-type` | A large type finding. |
+
 These are the same names used in the `kind` field of
 [JSON output](/reference/json-output).
 
+Because the list is comma-separated, one marker can silence exactly the
+checks you've accepted while leaving the rest reported:
+
+```csharp
+// roe-ignore-next-line high-complexity,long-method
+public void ParseEverything(string input)
+```
+
 <Note>
-  A dead file's finding is pinned at line 1, so an `unused-file` marker — or
-  a bare marker with no rule list — suppresses it from anywhere in the file.
+  A dead file's finding and a large file's finding are both pinned at line 1,
+  so an `unused-file` or `large-file` marker — or a bare marker with no rule
+  list — suppresses them from anywhere in the file.
 </Note>
 
 ## Ignore globs
 
-To drop every finding in matching files (for both `dead-code` and `dupes`),
-use the `ignore` list in a config file:
+To drop every finding in matching files — for `dead-code`, `dupes`, and
+`health` alike — use the `ignore` list in a config file:
 
 ```json roe.json
 {
@@ -55,3 +77,9 @@ use the `ignore` list in a config file:
 ```
 
 See [Configuration](/configuration) for glob semantics and config discovery.
+
+<Note>
+  Duplicate groups and circular dependencies span multiple files, so neither
+  maps onto a single-line comment and neither has an inline suppression.
+  Ignore globs are the only way to silence them.
+</Note>

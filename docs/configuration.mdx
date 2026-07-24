@@ -24,7 +24,16 @@ error.
   "aggressive": true,
   "roots": ["MyApp.Program.Main"],
   "libraryProjects": ["MyLib"],
-  "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"]
+  "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"],
+  "health": {
+    "maxComplexity": 15,
+    "maxCognitive": 20,
+    "maxMethodLines": 60,
+    "maxParameters": 6,
+    "maxFileLines": 750,
+    "maxTypeMembers": 25,
+    "excludeTests": true
+  }
 }
 ```
 
@@ -33,10 +42,29 @@ error.
 | `aggressive` | boolean | Also flag enum members and public settable auto-properties. Default for the `--aggressive` flag. |
 | `roots` | string[] | Fully-qualified symbol names to treat as extra entry-point roots. Default for `--root`. |
 | `libraryProjects` | string[] | Project names to always treat in library mode (public API counts as used). Default for `--library`. |
-| `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to both `dead-code` and `dupes`. |
+| `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to all three commands. |
+| `health` | object | Thresholds for [`roe health`](/commands/health). Every key is optional. |
 
 Unknown fields are rejected, so a typo fails loudly instead of being
 silently ignored.
+
+## Health thresholds
+
+Every field under `health` is optional and corresponds to a flag on
+[`roe health`](/commands/health):
+
+| Field | Type | Flag | Default |
+| --- | --- | --- | --- |
+| `maxComplexity` | number | `--max-complexity` | `10` |
+| `maxCognitive` | number | `--max-cognitive` | `15` |
+| `maxMethodLines` | number | `--max-method-lines` | `40` |
+| `maxParameters` | number | `--max-parameters` | `5` |
+| `maxFileLines` | number | `--max-file-lines` | `750` |
+| `maxTypeMembers` | number | `--max-type-members` | `20` |
+| `excludeTests` | boolean | `--exclude-tests` | `false` |
+
+Committing these is usually better than passing six flags on every CI
+invocation, and it keeps local runs and CI in agreement.
 
 ## Ignore globs
 
@@ -44,18 +72,25 @@ silently ignored.
 A trailing `/` matches the whole directory, so `"Generated/"` needs no `**`.
 Patterns containing `..` are unsupported and produce a warning.
 
-The same `ignore` list also applies to `roe dupes`, since a duplicate spans
-multiple files and doesn't map cleanly onto a single-line
-[inline suppression comment](/suppressing-findings).
+The same `ignore` list also applies to `roe dupes` and to `roe health`'s
+circular dependencies, since both span multiple files and don't map cleanly
+onto a single-line [inline suppression comment](/suppressing-findings).
 
 ## Precedence
 
-For `aggressive`, `roots`, and `libraryProjects`: an explicit
-`--aggressive`, `--root`, or `--library` flag always wins, otherwise the
-config's value applies, otherwise the built-in default (`false` / no extra
-roots / no extra library projects).
+Every setting follows the same order: an explicit command-line flag wins,
+otherwise the config file's value applies, otherwise the built-in default.
+
+For `aggressive`, `roots`, and `libraryProjects` that means an explicit
+`--aggressive`, `--root`, or `--library` flag beats the config, falling back
+to `false` / no extra roots / no extra library projects.
 
 Two nuances: `--aggressive` can only turn the setting on — there is no
 `--no-aggressive` to override a config's `"aggressive": true`. And passing
 `--root` or `--library` replaces the config's list wholesale rather than
 merging with it.
+
+Health thresholds work the same way, per field: `--max-complexity 12`
+overrides `"maxComplexity"` for that run, while every threshold you don't
+pass still comes from the config. Like `--aggressive`, `--exclude-tests` can
+only turn the setting on.
