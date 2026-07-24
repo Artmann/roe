@@ -22,6 +22,7 @@ pub fn extract(file: FileId, source: &[u8], root: Node, rodeo: &ThreadedRodeo) -
             has_top_level_statements: false,
             has_errors: root.has_error(),
             is_generated: false,
+            line_count: root.end_position().row as u32 + 1,
         },
         namespace_stack: Vec::new(),
         decl_stack: Vec::new(),
@@ -506,6 +507,8 @@ impl<'a> Walker<'a> {
         let has_body = node.child_by_field_name("body").is_some()
             || node.child_by_field_name("value").is_some()
             || has_accessors;
+        let (cyclomatic, cognitive, body_lines) = compute_member_complexity(node, kind);
+        let parameter_count = count_parameters(node);
 
         let position_node = name_node.unwrap_or(node);
         let interned_name = self.intern(&name);
@@ -520,6 +523,10 @@ impl<'a> Walker<'a> {
                 decl.is_extension_method = is_extension_method;
                 decl.is_auto_property = is_auto_property;
                 decl.has_body = has_body;
+                decl.cyclomatic = cyclomatic;
+                decl.cognitive = cognitive;
+                decl.body_lines = body_lines;
+                decl.parameter_count = parameter_count;
             },
         );
 
@@ -634,6 +641,10 @@ impl<'a> Walker<'a> {
             is_auto_property: false,
             has_body: false,
             arity: 0,
+            cyclomatic: 0,
+            cognitive: 0,
+            body_lines: 0,
+            parameter_count: 0,
             line: position.row as u32 + 1,
             column: position.column as u32 + 1,
         };
@@ -779,11 +790,247 @@ fn auto_property_shape(node: Node) -> (bool, bool) {
     (saw_accessor && all_bodyless, saw_accessor)
 }
 
+/// The executable body node(s) of a member declaration. Methods,
+/// constructors, operators, and destructors have exactly one (the `body`
+/// field, block or arrow); properties/indexers/events either have one arrow
+/// body (the `value` field) or one body per accessor. Auto-properties,
+/// abstract/partial members, and bodyless events have none.
+fn method_bodies(node: Node, kind: MemberKind) -> SmallVec<[Node; 4]> {
+    let mut bodies = SmallVec::new();
+
+    match kind {
+        MemberKind::Method
+        | MemberKind::Constructor
+        | MemberKind::StaticConstructor
+        | MemberKind::Destructor
+        | MemberKind::Operator
+        | MemberKind::ConversionOperator => {
+            if let Some(body) = node.child_by_field_name("body") {
+                bodies.push(body);
+            }
+        }
+        MemberKind::Property | MemberKind::Indexer | MemberKind::Event => {
+            if let Some(value) = node.child_by_field_name("value") {
+                bodies.push(value);
+            } else if let Some(accessors) = node.child_by_field_name("accessors") {
+                let mut cursor = accessors.walk();
+                for accessor in accessors.children(&mut cursor) {
+                    if accessor.kind() != "accessor_declaration" {
+                        continue;
+                    }
+                    if let Some(body) = accessor.child_by_field_name("body") {
+                        bodies.push(body);
+                    }
+                }
+            }
+        }
+        MemberKind::Field | MemberKind::EnumMember => {}
+    }
+
+    bodies
+}
+
+/// McCabe cyclomatic complexity (1 + decision points) and body line span. A
+/// member with several accessor bodies (`get`/`set`) sums their decision
+/// points and counts each additional accessor beyond the first as its own
+/// branch, since reaching one accessor rather than another is itself a fork
+/// in control flow; the line span covers from the first body's start to the
+/// last body's end.
+fn compute_member_complexity(node: Node, kind: MemberKind) -> (u32, u32, u32) {
+    let bodies = method_bodies(node, kind);
+    let Some(first) = bodies.first() else {
+        return (0, 0, 0);
+    };
+
+    let mut cyclomatic = 1 + (bodies.len() as u32 - 1);
+    let mut cognitive = 0;
+    let mut start_row = first.start_position().row;
+    let mut end_row = first.end_position().row;
+    for body in &bodies {
+        cyclomatic += count_decision_points(*body);
+        cognitive += count_cognitive(*body, 0);
+        start_row = start_row.min(body.start_position().row);
+        end_row = end_row.max(body.end_position().row);
+    }
+
+    (cyclomatic, cognitive, (end_row - start_row) as u32 + 1)
+}
+
+/// Decision points within a body: branches (`if`/`for`/`foreach`/`while`/
+/// `do`/`catch`/ternary/switch branches) and short-circuiting boolean
+/// operators (`&&`/`||`/`??`), each adding one path through the method. The
+/// grammar starts a new `switch_section` at every `case`/`default` label
+/// (even label-only fallthroughs with no statements of their own), so each
+/// label counts as its own branch.
+fn count_decision_points(node: Node) -> u32 {
+    let mut count = match node.kind() {
+        "if_statement"
+        | "for_statement"
+        | "foreach_statement"
+        | "while_statement"
+        | "do_statement"
+        | "catch_clause"
+        | "conditional_expression"
+        | "switch_section"
+        | "switch_expression_arm" => 1,
+        "binary_expression" => match node.child_by_field_name("operator") {
+            Some(op) if matches!(op.kind(), "&&" | "||" | "??") => 1,
+            _ => 0,
+        },
+        _ => 0,
+    };
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        count += count_decision_points(child);
+    }
+
+    count
+}
+
+/// Cognitive complexity (Campbell, SonarSource 2018) of a body. Where
+/// cyclomatic complexity counts paths, this estimates how hard code is to
+/// *read*, so the two disagree in useful ways: a flat ten-case `switch`
+/// scores 1 here but 10 there, while four levels of nested `if` score far
+/// worse here than their path count suggests.
+///
+/// The rules, in short: a flow-breaking structure costs `1 + nesting`, so
+/// the same construct costs more the deeper it sits; `else`/`else if` cost a
+/// flat 1 because a chain reads linearly; lambdas and local functions nest
+/// their contents without costing anything themselves; and a run of one
+/// boolean operator costs 1 however long it is (`a && b && c` is one idea,
+/// `a && b || c` is two). There is no baseline of 1 — straight-line code
+/// scores 0.
+///
+/// Two deliberate departures from the spec: recursion is not counted (it
+/// would need name resolution the extractor does not have here), and `??` is
+/// not treated as a boolean operator (`count_decision_points` still counts
+/// it for cyclomatic).
+fn count_cognitive(node: Node, nesting: u32) -> u32 {
+    match node.kind() {
+        // Handled as a chain so `else if` does not nest.
+        "if_statement" => cognitive_if(node, nesting),
+
+        // Structures that both cost and nest their contents.
+        "for_statement"
+        | "foreach_statement"
+        | "while_statement"
+        | "do_statement"
+        | "catch_clause"
+        | "switch_statement"
+        | "switch_expression"
+        | "conditional_expression" => 1 + nesting + cognitive_children(node, nesting + 1),
+
+        // Nest their contents without costing anything themselves.
+        "lambda_expression" | "anonymous_method_expression" | "local_function_statement" => {
+            cognitive_children(node, nesting + 1)
+        }
+
+        // An unconditional jump breaks the reader's flow, but is not nested.
+        "goto_statement" => 1 + cognitive_children(node, nesting),
+
+        "binary_expression" => cognitive_boolean_sequence(node) + cognitive_children(node, nesting),
+
+        _ => cognitive_children(node, nesting),
+    }
+}
+
+fn cognitive_children(node: Node, nesting: u32) -> u32 {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .map(|child| count_cognitive(child, nesting))
+        .sum()
+}
+
+/// `if` costs `1 + nesting` and nests its body; every `else`/`else if` after
+/// it costs a flat 1 and stays at the original depth, because a chain of
+/// conditions reads as one decision, not a deepening one.
+fn cognitive_if(node: Node, nesting: u32) -> u32 {
+    let mut count = 1 + nesting;
+
+    if let Some(condition) = node.child_by_field_name("condition") {
+        count += count_cognitive(condition, nesting);
+    }
+    if let Some(consequence) = node.child_by_field_name("consequence") {
+        count += count_cognitive(consequence, nesting + 1);
+    }
+    if let Some(alternative) = node.child_by_field_name("alternative") {
+        count += cognitive_else(alternative, nesting);
+    }
+
+    count
+}
+
+fn cognitive_else(alternative: Node, nesting: u32) -> u32 {
+    // Some grammar versions wrap the branch in an `else_clause`; unwrap it so
+    // the `else if` check below sees the real statement either way.
+    let branch = if alternative.kind() == "else_clause" {
+        alternative.named_child(0).unwrap_or(alternative)
+    } else {
+        alternative
+    };
+
+    if branch.kind() != "if_statement" {
+        return 1 + count_cognitive(branch, nesting + 1);
+    }
+
+    let mut count = 1;
+
+    if let Some(condition) = branch.child_by_field_name("condition") {
+        count += count_cognitive(condition, nesting);
+    }
+    if let Some(consequence) = branch.child_by_field_name("consequence") {
+        count += count_cognitive(consequence, nesting + 1);
+    }
+    if let Some(next) = branch.child_by_field_name("alternative") {
+        count += cognitive_else(next, nesting);
+    }
+
+    count
+}
+
+/// One point per run of the same boolean operator. Left-associative parsing
+/// makes `a && b && c` a `&&` nested inside a `&&`, so a node only starts a
+/// new run when its operator differs from its parent's.
+fn cognitive_boolean_sequence(node: Node) -> u32 {
+    let Some(operator) = node.child_by_field_name("operator") else {
+        return 0;
+    };
+    if !matches!(operator.kind(), "&&" | "||") {
+        return 0;
+    }
+
+    let parent_operator = node
+        .parent()
+        .filter(|parent| parent.kind() == "binary_expression")
+        .and_then(|parent| parent.child_by_field_name("operator"))
+        .map(|parent_operator| parent_operator.kind());
+
+    if parent_operator == Some(operator.kind()) {
+        0
+    } else {
+        1
+    }
+}
+
+/// Declared parameter count from a `parameters` field (`parameter_list` or
+/// `bracketed_parameter_list` — both use `parameter` children).
+fn count_parameters(node: Node) -> u32 {
+    let Some(parameters) = node.child_by_field_name("parameters") else {
+        return 0;
+    };
+    let mut cursor = parameters.walk();
+    parameters
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "parameter")
+        .count() as u32
+}
+
 #[cfg(test)]
 mod tests {
     use lasso::ThreadedRodeo;
 
-    use crate::extract::{FILE_ROOT, FileFacts, RawRefKind, extract_source};
+    use crate::extract::{FILE_ROOT, FileFacts, RawDecl, RawRefKind, extract_source};
     use crate::model::{MemberKind, Modifiers, SymbolKind, TypeKind};
 
     fn extract(source: &str) -> (FileFacts, ThreadedRodeo) {
@@ -1197,5 +1444,355 @@ namespace Outer
         let (facts, _rodeo) = extract("class Broken { void M( } \nclass Fine { }");
         assert!(facts.has_errors);
         assert!(!facts.decls.is_empty());
+    }
+
+    fn decl_named<'a>(facts: &'a FileFacts, rodeo: &ThreadedRodeo, name: &str) -> &'a RawDecl {
+        facts
+            .decls
+            .iter()
+            .find(|d| rodeo.resolve(&d.name) == name)
+            .unwrap_or_else(|| panic!("no decl named {name}"))
+    }
+
+    #[test]
+    fn empty_method_has_baseline_complexity_of_one() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M() { }
+}
+"#,
+        );
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 1);
+    }
+
+    #[test]
+    fn if_else_adds_one_decision_point() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(bool flag)
+    {
+        if (flag)
+        {
+            DoA();
+        }
+        else
+        {
+            DoB();
+        }
+    }
+}
+"#,
+        );
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 2);
+    }
+
+    #[test]
+    fn short_circuit_operators_each_add_one_decision_point() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    bool M(bool a, bool b, string s)
+    {
+        return a && b || s != null && (s ?? "x").Length > 0;
+    }
+}
+"#,
+        );
+        // baseline 1 + && + || + && + ?? = 5
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 5);
+    }
+
+    #[test]
+    fn every_loop_form_is_a_decision_point() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(int[] xs)
+    {
+        for (var i = 0; i < xs.Length; i++) { DoA(); }
+        foreach (var x in xs) { DoB(); }
+        while (Ready()) { DoC(); }
+        do { DoD(); } while (Ready());
+    }
+}
+"#,
+        );
+        // The grammar calls it `foreach_statement`, not `for_each_statement`;
+        // spelling it the latter way silently skipped every foreach loop.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 5);
+    }
+
+    #[test]
+    fn straight_line_code_has_no_cognitive_complexity() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    int M()
+    {
+        var a = 1;
+        var b = 2;
+        return a + b;
+    }
+}
+"#,
+        );
+        // Unlike cyclomatic, cognitive complexity has no baseline of 1.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cognitive, 0);
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 1);
+    }
+
+    #[test]
+    fn nesting_costs_more_than_flat_structure_at_equal_cyclomatic() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void Flat(bool a, bool b, bool c)
+    {
+        if (a) { DoA(); }
+        if (b) { DoB(); }
+        if (c) { DoC(); }
+    }
+
+    void Nested(bool a, bool b, bool c)
+    {
+        if (a)
+        {
+            if (b)
+            {
+                if (c) { DoC(); }
+            }
+        }
+    }
+}
+"#,
+        );
+        let flat = decl_named(&facts, &rodeo, "Flat");
+        let nested = decl_named(&facts, &rodeo, "Nested");
+
+        // Cyclomatic cannot tell these apart — three branches either way.
+        assert_eq!(flat.cyclomatic, 4);
+        assert_eq!(nested.cyclomatic, 4);
+
+        // Cognitive can: 1+1+1 flat, versus 1+2+3 as the nesting deepens.
+        assert_eq!(flat.cognitive, 3);
+        assert_eq!(nested.cognitive, 6);
+    }
+
+    #[test]
+    fn else_if_chain_stays_flat() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(int x)
+    {
+        if (x == 1) { DoA(); }
+        else if (x == 2) { DoB(); }
+        else { DoC(); }
+    }
+}
+"#,
+        );
+        // if + else-if + else, each a flat 1 — the chain reads linearly.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cognitive, 3);
+    }
+
+    #[test]
+    fn switch_costs_one_regardless_of_case_count() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(int x)
+    {
+        switch (x)
+        {
+            case 1: DoA(); break;
+            case 2: DoB(); break;
+            case 3: DoC(); break;
+            default: DoD(); break;
+        }
+    }
+}
+"#,
+        );
+        let m = decl_named(&facts, &rodeo, "M");
+        // One dispatch to understand, however many arms it has...
+        assert_eq!(m.cognitive, 1);
+        // ...where cyclomatic charges for every one of them.
+        assert_eq!(m.cyclomatic, 5);
+    }
+
+    #[test]
+    fn boolean_runs_count_once_but_mixed_operators_count_separately() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    bool Same(bool a, bool b, bool c) => a && b && c;
+
+    bool Mixed(bool a, bool b, bool c) => a && b || c;
+}
+"#,
+        );
+        assert_eq!(decl_named(&facts, &rodeo, "Same").cognitive, 1);
+        assert_eq!(decl_named(&facts, &rodeo, "Mixed").cognitive, 2);
+    }
+
+    #[test]
+    fn lambdas_nest_their_contents_without_costing_anything() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(List<int> xs)
+    {
+        xs.ForEach(x =>
+        {
+            if (x > 0) { DoA(); }
+        });
+    }
+}
+"#,
+        );
+        // The lambda itself is free, but the `if` inside it sits one level
+        // deep, so it costs 2 rather than 1.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cognitive, 2);
+    }
+
+    #[test]
+    fn loops_nest_the_branches_inside_them() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(int[] xs)
+    {
+        foreach (var x in xs)
+        {
+            if (x > 0) { DoA(); }
+        }
+    }
+}
+"#,
+        );
+        // foreach at depth 0 costs 1, the if at depth 1 costs 2.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cognitive, 3);
+    }
+
+    #[test]
+    fn switch_sections_and_arms_are_decision_points() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void Statement(int x)
+    {
+        switch (x)
+        {
+            case 1:
+            case 2:
+                DoA();
+                break;
+            default:
+                DoB();
+                break;
+        }
+    }
+
+    int Expression(int x) => x switch
+    {
+        1 => 10,
+        2 => 20,
+        _ => 0,
+    };
+}
+"#,
+        );
+        // Three switch_section nodes (case 1, case 2, default — the grammar
+        // starts a new section at every label) => baseline 1 + 3 = 4.
+        assert_eq!(decl_named(&facts, &rodeo, "Statement").cyclomatic, 4);
+        // Three switch_expression_arm nodes => baseline 1 + 3 = 4.
+        assert_eq!(decl_named(&facts, &rodeo, "Expression").cyclomatic, 4);
+    }
+
+    #[test]
+    fn arrow_bodied_method_is_measured() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    int M(bool flag) => flag ? 1 : 0;
+}
+"#,
+        );
+        let m = decl_named(&facts, &rodeo, "M");
+        assert_eq!(m.cyclomatic, 2);
+        assert_eq!(m.body_lines, 1);
+        assert_eq!(m.parameter_count, 1);
+    }
+
+    #[test]
+    fn property_accessors_are_measured_and_summed() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    private int backing;
+
+    public int Value
+    {
+        get { return backing; }
+        set
+        {
+            if (value < 0)
+            {
+                throw new ArgumentOutOfRangeException();
+            }
+            backing = value;
+        }
+    }
+}
+"#,
+        );
+        let value = decl_named(&facts, &rodeo, "Value");
+        // baseline 1 + 1 extra accessor + 1 if = 3.
+        assert_eq!(value.cyclomatic, 3);
+    }
+
+    #[test]
+    fn auto_property_has_no_complexity() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    public int Value { get; set; }
+}
+"#,
+        );
+        let value = decl_named(&facts, &rodeo, "Value");
+        assert_eq!(value.cyclomatic, 0);
+        assert_eq!(value.body_lines, 0);
+    }
+
+    #[test]
+    fn parameter_count_is_recorded() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(int a, string b, bool c) { }
+}
+"#,
+        );
+        assert_eq!(decl_named(&facts, &rodeo, "M").parameter_count, 3);
     }
 }

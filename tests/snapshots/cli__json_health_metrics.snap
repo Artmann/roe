@@ -1,0 +1,85 @@
+---
+source: tests/cli.rs
+assertion_line: 376
+expression: stdout
+---
+{
+  "version": 1,
+  "root": "<repo>/tests/fixtures/health_metrics",
+  "summary": {
+    "projects": 1,
+    "filesScanned": 2,
+    "symbols": 15,
+    "highComplexity": 1,
+    "highCognitiveComplexity": 1,
+    "longMethods": 0,
+    "tooManyParameters": 1,
+    "largeFiles": 0,
+    "largeTypes": 1,
+    "circularDependencies": 1,
+    "elapsedMs": 0
+  },
+  "findings": [
+    {
+      "kind": "large-type",
+      "name": "HealthMetrics.Widget",
+      "project": "HealthMetrics",
+      "file": "HealthMetrics/Widget.cs",
+      "line": 3,
+      "column": 14,
+      "metric": 4,
+      "threshold": 3
+    },
+    {
+      "kind": "high-complexity",
+      "name": "HealthMetrics.Widget.Branchy",
+      "project": "HealthMetrics",
+      "file": "HealthMetrics/Widget.cs",
+      "line": 5,
+      "column": 17,
+      "metric": 4,
+      "threshold": 3
+    },
+    {
+      "kind": "high-cognitive-complexity",
+      "name": "HealthMetrics.Widget.Branchy",
+      "project": "HealthMetrics",
+      "file": "HealthMetrics/Widget.cs",
+      "line": 5,
+      "column": 17,
+      "metric": 3,
+      "threshold": 2
+    },
+    {
+      "kind": "too-many-parameters",
+      "name": "HealthMetrics.Widget.ManyParams",
+      "project": "HealthMetrics",
+      "file": "HealthMetrics/Widget.cs",
+      "line": 17,
+      "column": 17,
+      "metric": 6,
+      "threshold": 3
+    }
+  ],
+  "cycles": [
+    {
+      "members": [
+        {
+          "name": "HealthMetrics.Alpha",
+          "project": "HealthMetrics",
+          "file": "HealthMetrics/Cycle.cs",
+          "line": 3,
+          "column": 14
+        },
+        {
+          "name": "HealthMetrics.Beta",
+          "project": "HealthMetrics",
+          "file": "HealthMetrics/Cycle.cs",
+          "line": 8,
+          "column": 14
+        }
+      ]
+    }
+  ],
+  "hotspots": []
+}

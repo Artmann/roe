@@ -18,6 +18,10 @@ pub enum Command {
     /// Find duplicated code blocks
     #[command(name = "dupes")]
     Dupes(DupesArgs),
+
+    /// Flag complexity, size, and coupling issues
+    #[command(name = "health")]
+    Health(HealthArgs),
 }
 
 #[derive(Debug, Args)]
@@ -41,6 +45,56 @@ pub struct DeadCodeArgs {
     /// regardless of executables elsewhere in the workspace
     #[arg(long = "library", value_name = "PROJECT")]
     pub library_projects: Vec<String>,
+
+    /// Path to an explicit roe.json/roe.yaml/roe.yml config (skips
+    /// auto-discovery)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct HealthArgs {
+    /// Path to the codebase root (defaults to the current directory)
+    pub path: Option<PathBuf>,
+
+    /// Output format
+    #[arg(long, short = 'f', value_enum, default_value_t = OutputFormat::Human)]
+    pub format: OutputFormat,
+
+    /// Flag methods/properties above this cyclomatic complexity
+    #[arg(long, default_value_t = 10)]
+    pub max_complexity: u32,
+
+    /// Flag methods/properties above this cognitive complexity — like
+    /// cyclomatic, but weighted by how deeply nested the code is
+    #[arg(long, default_value_t = 15)]
+    pub max_cognitive: u32,
+
+    /// Flag methods/properties whose body spans more than this many lines
+    #[arg(long, default_value_t = 40)]
+    pub max_method_lines: u32,
+
+    /// Flag methods/operators/indexers declared with more than this many
+    /// parameters
+    #[arg(long, default_value_t = 5)]
+    pub max_parameters: u32,
+
+    /// Flag files longer than this many lines
+    #[arg(long, default_value_t = 750)]
+    pub max_file_lines: u32,
+
+    /// Flag types with more than this many members
+    #[arg(long, default_value_t = 20)]
+    pub max_type_members: u32,
+
+    /// Also rank the files that are both complex and frequently changed, read
+    /// from git history. Informational — never affects the exit code
+    #[arg(long)]
+    pub hotspots: bool,
+
+    /// How many hotspots to list
+    #[arg(long, default_value_t = 10, requires = "hotspots")]
+    pub top: usize,
 
     /// Path to an explicit roe.json/roe.yaml/roe.yml config (skips
     /// auto-discovery)
