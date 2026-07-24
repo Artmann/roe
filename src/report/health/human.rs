@@ -379,11 +379,13 @@ fn print_cycle(cycle: &CircularDependency, workspace: &Workspace) {
             .map(|member| member.name.as_str())
             .collect();
 
+        let count = cycle.others.len();
+
         println!(
             "    {}",
             format!(
-                "+ {} more in this cycle: {}",
-                pluralize(cycle.others.len(), "type"),
+                "+ {count} more {} in this cycle: {}",
+                if count == 1 { "type" } else { "types" },
                 names.join(", ")
             )
             .dimmed()

@@ -4,7 +4,7 @@ description: "How to use roe in scripts and CI."
 icon: "terminal"
 ---
 
-Both `roe dead-code` and `roe dupes` use the same exit codes:
+`roe dead-code`, `roe dupes`, and `roe health` all use the same exit codes:
 
 | Code | Meaning |
 | --- | --- |
@@ -14,6 +14,13 @@ Both `roe dead-code` and `roe dupes` use the same exit codes:
 
 Warnings (for example, about ambiguous config files) go to stderr as
 `warning: …` and don't affect the exit code.
+
+<Note>
+  [Hotspots](/commands/health#hotspots) are the one exception: they're
+  informational and never affect the exit code. Every codebase has a riskiest
+  file, so failing a build over the existence of a ranking would make the
+  check useless as a gate.
+</Note>
 
 ## In CI
 

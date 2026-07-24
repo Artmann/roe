@@ -1,0 +1,193 @@
+---
+title: "roe health"
+description: "Flag complex, oversized, and tangled code, and rank change hotspots."
+icon: "heart-pulse"
+---
+
+Flags code that's hard to work with rather than code that's unused: methods
+that are too complex or too long, types and files that have grown too big,
+and types that depend on each other in a cycle. Opt in to `--hotspots` to
+also rank the files that are both complex and frequently changed.
+
+```bash
+roe health [PATH]
+```
+
+Truncated to the two worst findings with `--limit 2`:
+
+```text
+Simulation/AI/ActionGenerator.cs (Simulation)
+    11:35  Simulation.AI.ActionGenerator.GenerateActions
+           cyclomatic 46/10 · cognitive 86/15 · 242/40 lines
+
+Simulation/Scenarios/TenementScenario.cs (Simulation)
+    19:28  Simulation.Scenarios.TenementScenario.Build
+           cyclomatic 12/10 · cognitive 19/15 · 195/40 lines
+  … and 70 more — re-run with --limit 0 to see all
+
+circular dependencies
+  Simulation.Core.GameState → Simulation.Core.MoveValidator → Simulation.Core.GameState
+    Simulation/Core/GameState.cs 15:21
+    Simulation/Core/MoveValidator.cs 12:21
+
+found 119 issues across 72 locations in 45 files — 3 project(s), 160 file(s), 1688 symbol(s) scanned in 281 ms
+  32 complex methods · 18 hard-to-follow methods · 49 long methods · 10 over-parameterized methods · 1 large file · 8 large types · 1 circular dependency
+```
+
+Each declaration gets one entry listing every check it tripped, and each
+metric is printed as `actual/threshold` so you can see how far past the line
+it sits. The worst offenders come first.
+
+## Options
+
+| Option | Description |
+| --- | --- |
+| `PATH` | Path to the codebase root — a directory, `.sln` file, or `.csproj` file. Defaults to the current directory. |
+| `-f, --format <human\|json>` | Output format. Defaults to `human`; `json` emits the stable v1 schema described in [JSON output](/reference/json-output). |
+| `--max-complexity <N>` | Flag methods and properties above this cyclomatic complexity. Defaults to `10`. |
+| `--max-cognitive <N>` | Flag methods and properties above this cognitive complexity. Defaults to `15`. |
+| `--max-method-lines <N>` | Flag methods and properties whose body spans more than this many lines. Defaults to `40`. |
+| `--max-parameters <N>` | Flag methods, operators, and indexers declared with more than this many parameters. Defaults to `5`. |
+| `--max-file-lines <N>` | Flag files longer than this many lines. Defaults to `750`. |
+| `--max-type-members <N>` | Flag types with more than this many members. Defaults to `20`. |
+| `--exclude-tests` | Skip declarations in test projects. Off by default. |
+| `--sort <severity\|path>` | Order findings by how far past their threshold they sit, or by file path. Defaults to `severity`. |
+| `--limit <N>` | Print at most this many findings; `0` prints all of them. Defaults to `0`. |
+| `--hotspots` | Also rank files that are both complex and frequently changed, read from git history. |
+| `--top <N>` | How many hotspots to list. Defaults to `10`. Requires `--hotspots`. |
+| `--config <PATH>` | Use this `roe.json`/`roe.yaml`/`roe.yml` instead of [auto-discovery](/configuration). |
+
+Every threshold can also be set persistently in a
+[config file](/configuration), which is usually what you want in CI rather
+than repeating six flags on each invocation.
+
+## The checks
+
+| Check | Flags |
+| --- | --- |
+| Complex method | A method or property whose cyclomatic complexity — the number of independent paths through it — exceeds `--max-complexity`. |
+| Hard-to-follow method | A method or property whose cognitive complexity exceeds `--max-cognitive`. Like cyclomatic, but weighted by nesting depth, so deeply nested code scores worse than the same number of flat branches. |
+| Long method | A method or property whose body spans more than `--max-method-lines` lines. |
+| Over-parameterized method | A method, operator, or indexer with more than `--max-parameters` parameters. |
+| Large file | A file longer than `--max-file-lines` lines. |
+| Large type | A type with more than `--max-type-members` members. |
+| Circular dependency | Two or more types that reference each other in a cycle. Has no threshold and can't be turned off. |
+
+Generated files are excluded from every check, as are files matched by the
+config's [`ignore` globs](/configuration).
+
+### Sorting and severity
+
+Severity is simply how many times over its threshold a finding sits —
+`metric / threshold` — which makes a cyclomatic complexity of 46 against a
+limit of 10 directly comparable to a 242-line body against a limit of 40.
+A declaration's severity is the worst of its checks, and a file's is the
+worst of its declarations.
+
+`--sort severity` (the default) puts the worst thing in the codebase first.
+`--sort path` groups by file path instead, which is stable regardless of the
+metrics and is the better choice when diffing two runs. Both are
+deterministic: severity ties break on location.
+
+`--limit` caps the human report only. When it bites, roe says how many
+findings it held back:
+
+```text
+  … and 70 more — re-run with --limit 0 to see all
+```
+
+<Note>
+  `--sort` and `--limit` are presentation only and don't apply to
+  `--format json`, which always emits every finding. Tooling does its own
+  ordering, and a silently truncated array would be actively misleading.
+</Note>
+
+### Large types report a breakdown
+
+Thirty auto-properties is a data holder; thirty methods is a god class. roe
+doesn't guess which one you have — it prints the composition and lets you
+judge:
+
+```text
+     6:21  Simulation.Units.Unit
+           34/20 members (19 properties, 15 methods)
+```
+
+Enum cases don't count towards a type's size. An enum's cases are its whole
+point, and counting them would report a 25-case enum as a god class.
+
+### Overloads
+
+Overloads share a name, so two flagged rows could otherwise be
+indistinguishable. Where that collision actually happens, roe appends a
+Roslyn-style arity suffix — and only there, since an arity on a name with no
+overloads is noise:
+
+```text
+    95:28  Simulation.Core.GameSimulation.TryBeginActivation/0
+   197:28  Simulation.Core.GameSimulation.TryBeginActivation/1
+```
+
+### Circular dependencies
+
+A cycle is reported as a chain of real references, each type pointing at the
+next and the last pointing back at the first. Larger tangles usually contain
+more types than any single loop through them touches; those are listed
+separately rather than being spliced into the path, which would imply
+references that don't exist:
+
+```text
+  App.Orders.Order → App.Orders.Invoice → App.Orders.Order
+    src/App/Orders/Order.cs 12:14
+    src/App/Orders/Invoice.cs 8:14
+    + 2 more types in this cycle: App.Orders.Line, App.Orders.Tax
+```
+
+## Hotspots
+
+`--hotspots` reads git history and ranks files by complexity multiplied by
+recent churn — the files that are both hard to understand and constantly
+being changed, which is where refactoring pays off most. Commits are weighted
+by recency on a 90-day half-life, so last month's churn counts for more than
+last year's.
+
+```bash
+roe health --hotspots --top 3
+```
+
+```text
+hotspots (complexity × churn over 52 commit(s))
+     37  Simulation.Cli/AsciiRenderer.cs  complexity 87 over 328 line(s), 8.7 weighted commit(s)
+     34  Simulation/AI/MovePlanner.cs  complexity 126 over 651 line(s), 10.8 weighted commit(s)
+     30  Simulation/Units/Unit.cs  complexity 43 over 166 line(s), 7.1 weighted commit(s)
+```
+
+Scores are relative: the riskiest file in the run scores `100` and everything
+else is measured against it, so they compare files within one run rather than
+across runs or repositories.
+
+Hotspots are informational and **never affect the exit code** — every
+codebase has a riskiest file, and failing a build over the existence of a
+ranking would make the check useless as a CI gate.
+
+<Note>
+  This is the one part of roe that reads git history, so the analysis root
+  must be inside a git repository. If it isn't, `--hotspots` fails with exit
+  `2` rather than silently reporting nothing.
+</Note>
+
+## Suppressing findings
+
+Individual findings take [inline suppression
+comments](/suppressing-findings) using the rule names `high-complexity`,
+`high-cognitive-complexity`, `long-method`, `too-many-parameters`,
+`large-file`, and `large-type`:
+
+```csharp
+// roe-ignore-next-line high-complexity
+public void ParseEverything(string input)
+```
+
+Circular dependencies span multiple files, so — like duplicates — they have
+no inline comment. Use the `ignore` globs in a
+[config file](/configuration) instead.

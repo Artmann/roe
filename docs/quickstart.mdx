@@ -1,11 +1,11 @@
 ---
 title: "Quickstart"
-description: "Run your first dead-code and duplicate scan in two minutes."
+description: "Run your first dead-code, duplicate, and health scan in two minutes."
 icon: "bolt"
 ---
 
-Both roe commands take a path to a directory, a `.sln` file, or a `.csproj`
-file, and default to the current directory. There's nothing to configure up
+Every roe command takes a path to a directory, a `.sln` file, or a `.csproj`
+file, and defaults to the current directory. There's nothing to configure up
 front — point roe at your solution and read the report.
 
 <Steps>
@@ -45,16 +45,34 @@ front — point roe at your solution and read the report.
     `--mode semantic` to also catch copies where variable names or numeric
     literals were changed.
   </Step>
+  <Step title="Scan for complexity and coupling">
+    ```bash
+    roe health path/to/solution
+    ```
+
+    ```text
+    src/App/Billing/InvoiceService.cs (App)
+        88:17  App.Billing.InvoiceService.RecalculateAll
+               cyclomatic 46/10 · cognitive 86/15 · 242/40 lines
+
+    found 3 issues across 1 location in 1 file — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 81 ms
+    ```
+
+    Each metric prints as `actual/threshold`, and the worst offenders come
+    first. Add `--hotspots` to also rank the files that are both complex and
+    frequently changed, read from git history.
+  </Step>
   <Step title="Wire it into scripts or CI">
-    Both commands exit `0` when clean, `1` when they have findings to
-    report, and `2` on error, and both support `--format json` for a stable,
+    Every command exits `0` when clean, `1` when it has findings to report,
+    and `2` on error, and all support `--format json` for a stable,
     machine-readable report. See [Exit codes](/reference/exit-codes) and
     [JSON output](/reference/json-output).
   </Step>
   <Step title="Tune out false positives">
     Mark individual findings with
     [inline suppression comments](/suppressing-findings), or set up a
-    [`roe.json` config file](/configuration) to ignore whole directories and
-    declare extra entry points.
+    [`roe.json` config file](/configuration) to ignore whole directories,
+    declare extra entry points, and pin your health thresholds so local runs
+    and CI agree.
   </Step>
 </Steps>

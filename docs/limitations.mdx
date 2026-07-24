@@ -24,6 +24,13 @@ but it comes with known blind spots:
 - **`roe dupes` does not de-duplicate overlapping or nested occurrences** of
   the same pattern repeated within a single long method — each is reported
   as-is.
+- **`roe health` counts overloads as one type member**, since name-based
+  resolution merges them, and its coupling graph is built from the same
+  name-based references — so a cycle routed through a conflated name may not
+  be a real one.
+- **`roe health --hotspots` needs git history** — it's the only part of roe
+  that reads a repository, and a shallow clone yields correspondingly
+  shallow churn.
 
 When a limitation produces a false positive, mark it with an
 [inline suppression](/suppressing-findings), an

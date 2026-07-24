@@ -1,11 +1,13 @@
 ---
 title: "Introduction"
-description: "Codebase intelligence for C#: find dead code and duplicated code with static analysis."
+description: "Codebase intelligence for C#: find dead code, duplicated code, and health issues with static analysis."
 ---
 
-roe finds dead code — unused types, members, and files — and duplicated code
-in C# solutions, so you can delete what's unused and de-duplicate what's
-copy-pasted. Static analysis only; roe never runs the code it analyzes.
+roe finds dead code — unused types, members, and files — duplicated code, and
+code that's grown too complex or too tangled in C# solutions, so you can
+delete what's unused, de-duplicate what's copy-pasted, and untangle what's
+become hard to work with. Static analysis only; roe never runs the code it
+analyzes.
 
 ```text
 $ roe dead-code path/to/solution
@@ -19,7 +21,7 @@ src/App/Billing/InvoiceService.cs (App)
 found 1 dead file · 0 unused types · 1 unused member — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 74 ms
 ```
 
-## Two commands
+## Three commands
 
 <CardGroup cols={2}>
   <Card title="roe dead-code" icon="skull" href="/commands/dead-code">
@@ -30,10 +32,14 @@ found 1 dead file · 0 unused types · 1 unused member — 3 project(s), 214 fil
     Find copy-pasted — and optionally copy-pasted-and-renamed — blocks of
     code across your solution.
   </Card>
+  <Card title="roe health" icon="heart-pulse" href="/commands/health">
+    Flag complex, oversized, and circularly dependent code, and rank the
+    files that change most often.
+  </Card>
 </CardGroup>
 
-Both commands accept a path to a directory, a `.sln` file, or a `.csproj`
-file, work on codebases that don't compile, and are tuned so that when in
+Every command accepts a path to a directory, a `.sln` file, or a `.csproj`
+file, works on codebases that don't compile, and is tuned so that when in
 doubt, code is marked used — a missed finding is cheap, a wrong one is a bug.
 
 ## Get started

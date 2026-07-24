@@ -1,10 +1,10 @@
 ---
 title: "JSON output"
-description: "Stable v1 machine-readable schemas for both commands."
+description: "Stable v1 machine-readable schemas for every command."
 icon: "brackets-curly"
 ---
 
-Both commands support `--format json` for machine-readable output. The
+Every command supports `--format json` for machine-readable output. The
 schemas are versioned: `version` is `1`, and changes within v1 are additive
 only, so parsers can rely on the fields below. Keys are camelCase, optional
 fields are omitted when absent, and `file` paths are relative to `root`.
@@ -101,3 +101,88 @@ fields are omitted when absent, and `file` paths are relative to `root`.
 | `groups[].tokenCount` | Length of the duplicated block in tokens. |
 | `groups[].lineCount` | Length of the duplicated block in lines. |
 | `groups[].occurrences[]` | Every location of the block: `file`, `startLine`, `startColumn`, `endLine`, `endColumn`. |
+
+## `roe health --format json`
+
+```json
+{
+  "version": 1,
+  "root": "/path/to/solution",
+  "summary": {
+    "projects": 1,
+    "filesScanned": 214,
+    "symbols": 2610,
+    "highComplexity": 1,
+    "highCognitiveComplexity": 0,
+    "longMethods": 0,
+    "tooManyParameters": 1,
+    "largeFiles": 0,
+    "largeTypes": 1,
+    "circularDependencies": 1,
+    "elapsedMs": 8
+  },
+  "findings": [
+    {
+      "kind": "large-type",
+      "name": "App.Billing.InvoiceService",
+      "project": "App",
+      "file": "src/App/Billing/InvoiceService.cs",
+      "line": 3,
+      "column": 14,
+      "metric": 34,
+      "threshold": 20,
+      "breakdown": {
+        "methods": 15,
+        "properties": 19,
+        "fields": 0,
+        "events": 0
+      }
+    }
+  ],
+  "cycles": [
+    {
+      "path": [
+        {
+          "name": "App.Orders.Order",
+          "project": "App",
+          "file": "src/App/Orders/Order.cs",
+          "line": 3,
+          "column": 14
+        },
+        {
+          "name": "App.Orders.Invoice",
+          "project": "App",
+          "file": "src/App/Orders/Invoice.cs",
+          "line": 8,
+          "column": 14
+        }
+      ],
+      "others": []
+    }
+  ],
+  "hotspots": []
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `version` | Schema version, `1`. |
+| `root` | The analysis root path. |
+| `summary` | Scan totals: `projects`, `filesScanned`, `symbols`, one count per check (`highComplexity`, `highCognitiveComplexity`, `longMethods`, `tooManyParameters`, `largeFiles`, `largeTypes`, `circularDependencies`), and `elapsedMs`. `commitsWalked` is present only when `--hotspots` was passed. |
+| `findings[].kind` | `high-complexity`, `high-cognitive-complexity`, `long-method`, `too-many-parameters`, `large-file`, or `large-type` — the same names used by [inline suppressions](/suppressing-findings). |
+| `findings[].name` | Fully-qualified symbol name, or the file path for a large file. |
+| `findings[].project` | The containing project. Optional. |
+| `findings[].file`, `line`, `column` | Location of the finding; large-file findings are pinned at `1:1`. |
+| `findings[].metric` | The measured value — the complexity score, line count, parameter count, or member count. |
+| `findings[].threshold` | The threshold it exceeded. `metric / threshold` is the severity the human report sorts by. |
+| `findings[].breakdown` | Member composition — `methods`, `properties`, `fields`, `events`. Present on `large-type` findings only. |
+| `cycles[].path` | The types on the cycle, each referencing the next and the last referencing the first. Each entry has `name`, `project`, `file`, `line`, `column`. |
+| `cycles[].others` | Types in the same tangle that aren't on `path`. Empty for a simple cycle. |
+| `hotspots[]` | Present only with `--hotspots`: `file`, `project`, `score`, `weightedCommits`, `cyclomatic`, `lines`, `complexityDensity`. Empty otherwise. |
+
+<Note>
+  One finding is emitted per tripped check, so a single method that's both too
+  complex and too long appears twice. The human report groups those into one
+  entry, and `--sort` and `--limit` apply to it alone — JSON is never
+  reordered or truncated.
+</Note>

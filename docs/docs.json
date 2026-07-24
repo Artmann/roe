@@ -15,7 +15,7 @@
       },
       {
         "group": "Commands",
-        "pages": ["commands/dead-code", "commands/dupes"]
+        "pages": ["commands/dead-code", "commands/dupes", "commands/health"]
       },
       {
         "group": "Guides",
