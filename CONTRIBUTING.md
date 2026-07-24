@@ -16,6 +16,36 @@ Fixtures under `tests/fixtures/` are miniature solutions pinning the
 false-positive kill list; they are parsed, never compiled or executed.
 roe never runs the code it analyzes.
 
+## Static analysis & code quality
+
+Lint policy lives in the repo, not in the CI command line: `[lints]` in
+`Cargo.toml` forbids `unsafe` and denies `unwrap` outside tests, and
+`clippy.toml` grants the test exemption. So `cargo clippy` locally enforces
+exactly what CI enforces.
+
+Every check below runs as its own GitHub check on each pull request
+([ci.yml](.github/workflows/ci.yml)). To reproduce them locally:
+
+```
+cargo install --locked cargo-deny cargo-llvm-cov cargo-machete cargo-mutants typos-cli
+
+cargo deny check                            # advisories, licenses, bans, sources
+cargo llvm-cov --summary-only               # coverage, including the CLI tests
+cargo machete                               # unused dependencies
+cargo mutants --in-diff <(git diff main...) # do the tests actually assert?
+typos                                       # spelling, incl. user-facing errors
+```
+
+Configuration lives in `deny.toml` and `_typos.toml`. Clippy findings are also
+uploaded as SARIF, so they show up as inline annotations on the pull request
+rather than only in the job log.
+
+Nothing is gated on a coverage number yet — the `Coverage` job publishes an
+`lcov` artifact and a job summary so we can watch the trend first. The baseline
+when these checks landed was 92% of lines and 91% of regions. `Mutants` is
+likewise advisory (`continue-on-error`) until its baseline is clean; every other
+check blocks.
+
 ## Commit conventions
 
 Use [conventional commits](https://www.conventionalcommits.org/), scoped to

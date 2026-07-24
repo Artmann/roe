@@ -278,6 +278,9 @@ mod tests {
 
     #[test]
     fn rejects_unknown_fields() {
+        // The misspelling is the point — it proves a near-miss of the real
+        // `aggressive` field is rejected rather than silently ignored. It is
+        // declared in `_typos.toml` so the spell checker leaves it alone.
         let err = serde_json::from_str::<RoeConfig>(r#"{"agressive": true}"#).unwrap_err();
         assert!(err.to_string().contains("unknown field"));
     }

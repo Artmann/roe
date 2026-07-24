@@ -8,7 +8,62 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+
+      - name: Summarize coverage
+        run: |
+          {
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: lcov.info
+
+      # Optional: only runs once a CODECOV_TOKEN repository secret exists. The
+      # job stays green without it — the artifact and job summary above are the
+      # baseline report.
+      - if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: true
+
+  deny:
+    name: Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check all
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -23,7 +78,64 @@ jobs:
 
       - run: cargo fmt --check
 
-      - run: cargo clippy --all-targets -- -D warnings
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: clippy-sarif,sarif-fmt
+
+      # One run does both jobs: `-D warnings` gates the check, and the same JSON
+      # goes through clippy-sarif so GitHub renders findings as inline
+      # annotations on the pull request. A second, non-strict run would be
+      # unreliable here — cargo does not refingerprint on CLIPPY_ARGS alone, so
+      # whichever run came second could no-op against the first one's cache.
+      # `shell: bash` is what turns on pipefail; without it the pipe would
+      # swallow clippy's exit code.
+      - name: Clippy
+        shell: bash
+        run: cargo clippy --all-targets --message-format=json -- -D warnings
+          | clippy-sarif | tee results.sarif | sarif-fmt
+
+      # Runs even when clippy failed — that is exactly when the annotations are
+      # worth having. Non-blocking because pull requests from forks don't get
+      # security-events write.
+      - if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: results.sarif
+          wait-for-processing: true
+
+  mutants:
+    name: Mutants
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    # Mutation testing surfaces real gaps but needs a clean baseline before it
+    # can block merges. Drop this line once a few pull requests have run green.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      - name: Diff against the base branch
+        run: git diff "origin/${{ github.base_ref }}..." > pull-request.diff
+
+      # --in-diff keeps mutants to the lines this pull request touched, so
+      # runtime scales with the change and not with the whole crate.
+      - run: cargo mutants --no-shuffle --in-diff pull-request.diff -j 2
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants
+          path: mutants.out
 
   test:
     name: Test (${{ matrix.os }})
@@ -40,3 +152,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - run: cargo test
+
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: crate-ci/typos@v1
+
+  unused-dependencies:
+    name: Unused dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bnjbvr/cargo-machete@main
