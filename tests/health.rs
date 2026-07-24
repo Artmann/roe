@@ -18,6 +18,7 @@ fn lenient() -> Thresholds {
         max_parameters: 100,
         max_file_lines: 1000,
         max_type_members: 100,
+        exclude_tests: false,
     }
 }
 
@@ -130,8 +131,15 @@ fn alpha_and_beta_form_a_circular_dependency() {
     let analysis = analyze(&fixture("health_metrics"), lenient()).expect("analysis should succeed");
     assert_eq!(analysis.result.cycles.len(), 1);
 
-    let mut names: Vec<&str> = analysis.result.cycles[0]
-        .members
+    let cycle = &analysis.result.cycles[0];
+    assert!(
+        cycle.others.is_empty(),
+        "a two-type cycle has nothing off the path, got {:?}",
+        cycle.others
+    );
+
+    let mut names: Vec<&str> = cycle
+        .path
         .iter()
         .map(|member| member.name.as_str())
         .collect();
@@ -150,6 +158,7 @@ fn generated_file_is_never_flagged() {
         max_parameters: 1,
         max_file_lines: 1,
         max_type_members: 0,
+        exclude_tests: false,
     };
 
     let found = findings("health_metrics", thresholds);
@@ -158,5 +167,81 @@ fn generated_file_is_never_flagged() {
             .iter()
             .all(|(_, name)| !name.contains("GeneratedThing")),
         "generated declarations must never be flagged, got {found:?}"
+    );
+}
+
+#[test]
+fn exclude_tests_drops_test_project_declarations_only() {
+    let mut thresholds = lenient();
+    thresholds.max_type_members = 0;
+
+    let included = findings("with_tests", thresholds);
+    assert!(
+        included
+            .iter()
+            .any(|(_, name)| name == "Lib.Tests.CalculatorTests"),
+        "the test class is flagged by default, got {included:?}"
+    );
+
+    thresholds.exclude_tests = true;
+    let excluded = findings("with_tests", thresholds);
+    assert_findings(
+        excluded,
+        vec![
+            (HealthFindingKind::LargeType, "Lib.Calculator".to_string()),
+            (
+                HealthFindingKind::LargeType,
+                "Lib.UnusedInternal".to_string(),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_scoped_marker_suppresses_only_the_rule_it_names() {
+    let mut thresholds = lenient();
+    thresholds.max_complexity = 3;
+    thresholds.max_cognitive = 2;
+
+    let found = findings("health_suppress", thresholds);
+
+    // Scoped keeps its cognitive finding; Bare loses both; Unmarked keeps both.
+    assert_findings(
+        found,
+        vec![
+            (
+                HealthFindingKind::HighCognitiveComplexity,
+                "HealthSuppress.Widget.Scoped".to_string(),
+            ),
+            (
+                HealthFindingKind::HighComplexity,
+                "HealthSuppress.Widget.Unmarked".to_string(),
+            ),
+            (
+                HealthFindingKind::HighCognitiveComplexity,
+                "HealthSuppress.Widget.Unmarked".to_string(),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_large_file_marker_is_honored_anywhere_in_the_file() {
+    let mut thresholds = lenient();
+    thresholds.max_file_lines = 5;
+
+    let flagged: Vec<String> = findings("health_suppress", thresholds)
+        .into_iter()
+        .filter(|(kind, _)| *kind == HealthFindingKind::LargeFile)
+        .map(|(_, name)| name)
+        .collect();
+
+    assert!(
+        flagged.iter().any(|name| name.contains("Loud.cs")),
+        "the unmarked file must still be reported, got {flagged:?}"
+    );
+    assert!(
+        !flagged.iter().any(|name| name.contains("Padded.cs")),
+        "the marked file must be suppressed, got {flagged:?}"
     );
 }

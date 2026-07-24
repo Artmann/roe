@@ -136,6 +136,52 @@ fn the_complex_and_frequently_changed_file_ranks_first() {
 }
 
 #[test]
+fn an_ignored_file_is_dropped_before_the_ranking_is_normalized() {
+    // The ranking is relative: every score is measured against the highest one
+    // in the run, and `--top` truncates afterwards. Filtering ignored files out
+    // of the finished list would therefore leave the survivors scored against a
+    // file the user excluded, and hand back fewer rows than were asked for.
+    let repository = Repository::new("ignore-ordering");
+
+    repository.write("App/Hot.cs", &dense_class("Hot", 40));
+    repository.write("App/Warm.cs", &dense_class("Warm", 12));
+    repository.write("App/Calm.cs", &dense_class("Calm", 6));
+    repository.commit("initial");
+
+    for revision in 1..4 {
+        repository.write("App/Hot.cs", &dense_class("Hot", 40 + revision));
+        repository.write("App/Warm.cs", &dense_class("Warm", 12 + revision));
+        repository.write("App/Calm.cs", &dense_class("Calm", 6 + revision));
+        repository.commit("touch every file");
+    }
+
+    let unfiltered = health_json(repository.path(), &["--hotspots", "--top", "2"]);
+    let ranked = unfiltered["hotspots"].as_array().expect("hotspots array");
+    assert_eq!(ranked.len(), 2);
+    assert_eq!(ranked[0]["file"], "App/Hot.cs");
+
+    repository.write("roe.json", "{ \"ignore\": [\"App/Hot.cs\"] }\n");
+    repository.commit("ignore the top file");
+
+    let filtered = health_json(repository.path(), &["--hotspots", "--top", "2"]);
+    let ranked = filtered["hotspots"].as_array().expect("hotspots array");
+
+    assert_eq!(
+        ranked.len(),
+        2,
+        "--top 2 must still return 2 rows, got {filtered}"
+    );
+    assert!(
+        ranked.iter().all(|hotspot| hotspot["file"] != "App/Hot.cs"),
+        "the ignored file must not be ranked, got {filtered}"
+    );
+    assert_eq!(
+        ranked[0]["score"], 100.0,
+        "scores must be re-based on the surviving files, got {filtered}"
+    );
+}
+
+#[test]
 fn hotspots_never_change_the_exit_code() {
     // Every codebase has a riskiest file. Failing a build over the existence
     // of a ranking would make the check useless as a CI gate.

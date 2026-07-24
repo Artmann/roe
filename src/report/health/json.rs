@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::model::{HealthFindingKind, HealthResult, Workspace};
+use crate::model::{CycleMember, HealthFindingKind, HealthResult, MemberBreakdown, Workspace};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +44,9 @@ struct JsonFinding {
     column: u32,
     metric: u32,
     threshold: u32,
+    /// Present on `large-type` findings only — what the members actually are.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    breakdown: Option<MemberBreakdown>,
 }
 
 #[derive(Serialize)]
@@ -60,7 +63,12 @@ struct JsonCycleMember {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JsonCycle {
-    members: Vec<JsonCycleMember>,
+    /// A real cycle: consecutive entries are joined by an actual reference
+    /// edge, and the last entry references the first.
+    path: Vec<JsonCycleMember>,
+    /// Same strongly-connected component, not on `path`. Tangled with the
+    /// cycle, but not necessarily adjacent to any particular member of it.
+    others: Vec<JsonCycleMember>,
 }
 
 #[derive(Serialize)]
@@ -111,27 +119,22 @@ pub fn print(result: &HealthResult, workspace: &Workspace) {
                 column: finding.column,
                 metric: finding.metric,
                 threshold: finding.threshold,
+                breakdown: finding.breakdown,
             })
             .collect(),
         cycles: result
             .cycles
             .iter()
             .map(|cycle| JsonCycle {
-                members: cycle
-                    .members
+                path: cycle
+                    .path
                     .iter()
-                    .map(|member| JsonCycleMember {
-                        name: member.name.clone(),
-                        project: member.project.clone(),
-                        file: crate::paths::display(
-                            member
-                                .file
-                                .strip_prefix(&workspace.root)
-                                .unwrap_or(&member.file),
-                        ),
-                        line: member.line,
-                        column: member.column,
-                    })
+                    .map(|member| json_member(member, workspace))
+                    .collect(),
+                others: cycle
+                    .others
+                    .iter()
+                    .map(|member| json_member(member, workspace))
                     .collect(),
             })
             .collect(),
@@ -158,6 +161,21 @@ pub fn print(result: &HealthResult, workspace: &Workspace) {
     match serde_json::to_string_pretty(&report) {
         Ok(json) => println!("{json}"),
         Err(error) => eprintln!("error: failed to serialize JSON report: {error}"),
+    }
+}
+
+fn json_member(member: &CycleMember, workspace: &Workspace) -> JsonCycleMember {
+    JsonCycleMember {
+        name: member.name.clone(),
+        project: member.project.clone(),
+        file: crate::paths::display(
+            member
+                .file
+                .strip_prefix(&workspace.root)
+                .unwrap_or(&member.file),
+        ),
+        line: member.line,
+        column: member.column,
     }
 }
 

@@ -61,31 +61,51 @@ pub struct HealthArgs {
     #[arg(long, short = 'f', value_enum, default_value_t = OutputFormat::Human)]
     pub format: OutputFormat,
 
-    /// Flag methods/properties above this cyclomatic complexity
-    #[arg(long, default_value_t = 10)]
-    pub max_complexity: u32,
+    // The threshold options are Option<u32> rather than clap defaults on
+    // purpose: with `default_value_t` there is no way to tell "the user asked
+    // for 10" from "nobody said anything", so a `health` block in roe.json
+    // could never take effect. Defaults live in `health::Thresholds::DEFAULT`
+    // and are spelled out in the help text instead.
+    /// Flag methods/properties above this cyclomatic complexity [default: 10]
+    #[arg(long)]
+    pub max_complexity: Option<u32>,
 
     /// Flag methods/properties above this cognitive complexity — like
-    /// cyclomatic, but weighted by how deeply nested the code is
-    #[arg(long, default_value_t = 15)]
-    pub max_cognitive: u32,
+    /// cyclomatic, but weighted by how deeply nested the code is [default: 15]
+    #[arg(long)]
+    pub max_cognitive: Option<u32>,
 
     /// Flag methods/properties whose body spans more than this many lines
-    #[arg(long, default_value_t = 40)]
-    pub max_method_lines: u32,
+    /// [default: 40]
+    #[arg(long)]
+    pub max_method_lines: Option<u32>,
 
     /// Flag methods/operators/indexers declared with more than this many
-    /// parameters
-    #[arg(long, default_value_t = 5)]
-    pub max_parameters: u32,
+    /// parameters [default: 5]
+    #[arg(long)]
+    pub max_parameters: Option<u32>,
 
-    /// Flag files longer than this many lines
-    #[arg(long, default_value_t = 750)]
-    pub max_file_lines: u32,
+    /// Flag files longer than this many lines [default: 750]
+    #[arg(long)]
+    pub max_file_lines: Option<u32>,
 
-    /// Flag types with more than this many members
-    #[arg(long, default_value_t = 20)]
-    pub max_type_members: u32,
+    /// Flag types with more than this many members [default: 20]
+    #[arg(long)]
+    pub max_type_members: Option<u32>,
+
+    /// Skip declarations in test projects — long arrange/act/assert methods
+    /// and multi-case fixtures are normal there
+    #[arg(long)]
+    pub exclude_tests: bool,
+
+    /// Order findings by how far past their threshold they sit, or by file
+    /// path
+    #[arg(long, value_enum, default_value_t = HealthSort::Severity)]
+    pub sort: HealthSort,
+
+    /// Print at most this many findings; 0 prints all of them
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    pub limit: usize,
 
     /// Also rank the files that are both complex and frequently changed, read
     /// from git history. Informational — never affects the exit code
@@ -100,6 +120,14 @@ pub struct HealthArgs {
     /// auto-discovery)
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum HealthSort {
+    /// Worst first, by how many times over its threshold each finding sits.
+    Severity,
+    /// Grouped by file path, ascending — stable regardless of the metrics.
+    Path,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

@@ -2,9 +2,46 @@ use std::path::Path;
 
 use colored::{ColoredString, Colorize};
 
+use crate::cli::HealthSort;
 use crate::model::{CircularDependency, HealthFinding, HealthFindingKind, HealthResult, Workspace};
 
-pub fn print(result: &HealthResult, workspace: &Workspace) {
+/// Every check one declaration tripped, printed as a single entry.
+///
+/// A method that is too long, too branchy, and too deeply nested is one thing
+/// to fix, not three. Listing it three times buries everything else in the
+/// report and makes the codebase read as worse than it is — so the findings
+/// stay one-per-check in [`HealthResult`] (JSON and the exit code are
+/// unchanged) and are folded together only here, on the way to the terminal.
+struct Group<'a> {
+    line: u32,
+    column: u32,
+    name: &'a str,
+    findings: Vec<&'a HealthFinding>,
+}
+
+impl Group<'_> {
+    /// A group is as bad as its worst check.
+    fn severity(&self) -> f64 {
+        self.findings
+            .iter()
+            .map(|finding| finding.severity())
+            .fold(0.0, f64::max)
+    }
+}
+
+struct FileGroup<'a> {
+    file: &'a Path,
+    project: Option<&'a str>,
+    groups: Vec<Group<'a>>,
+}
+
+impl FileGroup<'_> {
+    fn severity(&self) -> f64 {
+        self.groups.iter().map(Group::severity).fold(0.0, f64::max)
+    }
+}
+
+pub fn print(result: &HealthResult, workspace: &Workspace, sort: HealthSort, limit: usize) {
     if result.findings.is_empty() && result.cycles.is_empty() {
         println!(
             "{} no health issues found · {} project(s), {} file(s) scanned in {} ms",
@@ -17,20 +54,52 @@ pub fn print(result: &HealthResult, workspace: &Workspace) {
         return;
     }
 
-    let mut current_file: Option<&Path> = None;
-    for finding in &result.findings {
-        if current_file != Some(finding.file.as_path()) {
-            if current_file.is_some() {
-                println!();
-            }
-            current_file = Some(finding.file.as_path());
-            print_file_header(&finding.file, finding.project.as_deref(), workspace);
+    let mut files = group(&result.findings);
+    if sort == HealthSort::Severity {
+        sort_by_severity(&mut files);
+    }
+
+    let total_groups: usize = files.iter().map(|file| file.groups.len()).sum();
+    let cap = if limit == 0 {
+        total_groups
+    } else {
+        limit.min(total_groups)
+    };
+
+    let mut printed = 0;
+    for file in &files {
+        if printed >= cap {
+            break;
         }
-        print_finding(finding);
+        if printed > 0 {
+            println!();
+        }
+
+        print_file_header(file.file, file.project, workspace);
+
+        for group in &file.groups {
+            if printed >= cap {
+                break;
+            }
+
+            print_group(group);
+            printed += 1;
+        }
+    }
+
+    if printed < total_groups {
+        println!(
+            "  {}",
+            format!(
+                "… and {} more — re-run with --limit 0 to see all",
+                total_groups - printed
+            )
+            .dimmed()
+        );
     }
 
     if !result.cycles.is_empty() {
-        if current_file.is_some() {
+        if printed > 0 {
             println!();
         }
         println!("{}", "circular dependencies".bold());
@@ -51,9 +120,11 @@ pub fn print(result: &HealthResult, workspace: &Workspace) {
         + s.large_types
         + s.circular_dependencies;
     println!(
-        "{} {} — {} project(s), {} file(s), {} symbol(s) scanned in {} ms",
+        "{} {} across {} in {} — {} project(s), {} file(s), {} symbol(s) scanned in {} ms",
         "found".bold(),
         pluralize(total_findings, "issue").red().bold(),
+        pluralize(total_groups, "location"),
+        pluralize(files.len(), "file"),
         s.projects,
         s.files_scanned,
         s.symbols,
@@ -69,6 +140,74 @@ pub fn print(result: &HealthResult, workspace: &Workspace) {
         pluralize(s.large_types, "large type"),
         pluralize_dependencies(s.circular_dependencies),
     );
+}
+
+/// Fold the flat finding list into files and, within them, declarations.
+///
+/// `findings` arrives sorted by `(file, line, column)`, and a line/column pair
+/// identifies exactly one declaration, so both levels can be built by
+/// comparing against the entry just pushed — no map, and the input order is
+/// preserved for `--sort path`.
+fn group(findings: &[HealthFinding]) -> Vec<FileGroup<'_>> {
+    let mut files: Vec<FileGroup<'_>> = Vec::new();
+
+    for finding in findings {
+        let same_file = files
+            .last()
+            .is_some_and(|file| file.file == finding.file.as_path());
+
+        if !same_file {
+            files.push(FileGroup {
+                file: &finding.file,
+                project: finding.project.as_deref(),
+                groups: Vec::new(),
+            });
+        }
+
+        let Some(file) = files.last_mut() else {
+            continue;
+        };
+
+        let same_declaration = file.groups.last().is_some_and(|group| {
+            group.line == finding.line
+                && group.column == finding.column
+                && group.name == finding.name
+        });
+
+        if same_declaration {
+            if let Some(group) = file.groups.last_mut() {
+                group.findings.push(finding);
+            }
+        } else {
+            file.groups.push(Group {
+                line: finding.line,
+                column: finding.column,
+                name: &finding.name,
+                findings: vec![finding],
+            });
+        }
+    }
+
+    files
+}
+
+/// Worst first, at both levels, so the thing most worth fixing leads the
+/// report instead of whatever happens to sort first alphabetically. Ties fall
+/// back to position, which keeps the output stable across runs.
+fn sort_by_severity(files: &mut [FileGroup<'_>]) {
+    for file in files.iter_mut() {
+        file.groups.sort_by(|a, b| {
+            b.severity()
+                .total_cmp(&a.severity())
+                .then((a.line, a.column).cmp(&(b.line, b.column)))
+        });
+    }
+
+    files.sort_by(|a, b| {
+        b.severity()
+            .total_cmp(&a.severity())
+            .then(a.file.cmp(b.file))
+    });
 }
 
 /// The hotspot ranking, printed only when `--hotspots` asked for it.
@@ -141,64 +280,78 @@ fn print_file_header(file: &Path, project: Option<&str>, workspace: &Workspace) 
     }
 }
 
-fn print_finding(finding: &HealthFinding) {
-    let location = format!("{}:{}", finding.line, finding.column);
-    let (label, detail) = describe(finding);
+fn print_group(group: &Group<'_>) {
+    // Padded before colouring: ANSI escapes count towards a format width, so
+    // aligning a already-coloured string silently under-pads it.
+    let location = format!("{:>7}", format!("{}:{}", group.line, group.column));
+    let checks: Vec<String> = group.findings.iter().map(|f| describe(f)).collect();
+    let detail = checks.join(" · ");
 
-    if finding.kind == HealthFindingKind::LargeFile {
-        println!("  {:>7}  {}  {}", location.dimmed(), label, detail.dimmed());
-    } else {
-        println!(
-            "  {:>7}  {}  {} {}",
-            location.dimmed(),
-            label,
-            finding.name,
-            detail.dimmed()
-        );
+    // A large file has no symbol to name, and the header directly above it
+    // already says which file it is — so there is nothing to put on a first
+    // line.
+    let is_file_level = group
+        .findings
+        .iter()
+        .all(|finding| finding.kind == HealthFindingKind::LargeFile);
+
+    if is_file_level {
+        println!("  {}  {}", location.dimmed(), detail);
+        return;
     }
+
+    println!("  {}  {}", location.dimmed(), group.name);
+    println!("  {}  {}", " ".repeat(7), detail);
 }
 
-fn describe(finding: &HealthFinding) -> (ColoredString, String) {
-    match finding.kind {
-        HealthFindingKind::HighComplexity => (
-            "high complexity".red().bold(),
-            format!(
-                "cyclomatic complexity {} (max {})",
-                finding.metric, finding.threshold
-            ),
+/// `metric/threshold noun`, uniform across kinds so several checks read as one
+/// line. Coloured by how far past the limit the value sits rather than by
+/// which check it is — 46 branches against a limit of 10 is a different
+/// problem from 11 against the same limit, and the old per-kind colouring
+/// could not say so.
+fn describe(finding: &HealthFinding) -> String {
+    let headline = match finding.kind {
+        HealthFindingKind::HighComplexity => {
+            format!("cyclomatic {}/{}", finding.metric, finding.threshold)
+        }
+        HealthFindingKind::HighCognitiveComplexity => {
+            format!("cognitive {}/{}", finding.metric, finding.threshold)
+        }
+        HealthFindingKind::LongMethod => {
+            format!("{}/{} lines", finding.metric, finding.threshold)
+        }
+        HealthFindingKind::TooManyParameters => {
+            format!("{}/{} params", finding.metric, finding.threshold)
+        }
+        HealthFindingKind::LargeFile => {
+            format!("large file {}/{} lines", finding.metric, finding.threshold)
+        }
+        HealthFindingKind::LargeType => {
+            format!("{}/{} members", finding.metric, finding.threshold)
+        }
+    };
+
+    let colored = if finding.severity() >= 2.0 {
+        headline.red().bold()
+    } else {
+        headline.yellow()
+    };
+
+    // The breakdown is context, not a verdict: thirty auto-properties and
+    // thirty methods trip the same threshold and mean entirely different
+    // things, so it is printed plainly and left to the reader.
+    match finding.breakdown {
+        Some(breakdown) => format!(
+            "{colored} {}",
+            format!("({})", breakdown.describe()).dimmed()
         ),
-        HealthFindingKind::HighCognitiveComplexity => (
-            "hard to follow ".red().bold(),
-            format!(
-                "cognitive complexity {} (max {})",
-                finding.metric, finding.threshold
-            ),
-        ),
-        HealthFindingKind::LongMethod => (
-            "long method    ".yellow(),
-            format!("{} line(s) (max {})", finding.metric, finding.threshold),
-        ),
-        HealthFindingKind::TooManyParameters => (
-            "too many params".yellow(),
-            format!(
-                "{} parameter(s) (max {})",
-                finding.metric, finding.threshold
-            ),
-        ),
-        HealthFindingKind::LargeFile => (
-            "large file     ".yellow(),
-            format!("{} line(s) (max {})", finding.metric, finding.threshold),
-        ),
-        HealthFindingKind::LargeType => (
-            "large type     ".yellow(),
-            format!("{} member(s) (max {})", finding.metric, finding.threshold),
-        ),
+        None => colored.to_string(),
     }
 }
 
 fn print_cycle(cycle: &CircularDependency, workspace: &Workspace) {
     let mut names: Vec<&str> = cycle
-        .members
+        .path
         .iter()
         .map(|member| member.name.as_str())
         .collect();
@@ -207,7 +360,7 @@ fn print_cycle(cycle: &CircularDependency, workspace: &Workspace) {
     }
     println!("  {}", names.join(" → ").red().bold());
 
-    for member in &cycle.members {
+    for member in &cycle.path {
         let display = crate::paths::display(
             member
                 .file
@@ -215,6 +368,26 @@ fn print_cycle(cycle: &CircularDependency, workspace: &Workspace) {
                 .unwrap_or(&member.file),
         );
         println!("    {} {}:{}", display.dimmed(), member.line, member.column);
+    }
+
+    // Same tangle, but not on the arrow chain above — printing them inline
+    // would claim edges between them that may not exist.
+    if !cycle.others.is_empty() {
+        let names: Vec<&str> = cycle
+            .others
+            .iter()
+            .map(|member| member.name.as_str())
+            .collect();
+
+        println!(
+            "    {}",
+            format!(
+                "+ {} more in this cycle: {}",
+                pluralize(cycle.others.len(), "type"),
+                names.join(", ")
+            )
+            .dimmed()
+        );
     }
 }
 

@@ -3,22 +3,29 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use globset::GlobSet;
 use lasso::ThreadedRodeo;
 use rustc_hash::FxHashMap;
 
 use crate::cli::HealthArgs;
+use crate::config::EffectiveHealth;
 use crate::model::{
     CircularDependency, CycleMember, HealthFinding, HealthFindingKind, HealthResult, HealthSummary,
-    Hotspot, ProjectId, SymbolId, Workspace,
+    Hotspot, MemberBreakdown, MemberKind, ProjectId, SymbolId, SymbolKind, Workspace,
 };
 use crate::resolve::{Resolution, SymbolFlags};
-use crate::{churn, config, coupling, discover, extract, graph, hotspot, report, resolve};
+use crate::{
+    churn, config, coupling, discover, extract, graph, hotspot, report, resolve, suppress,
+};
 
 pub struct Analysis {
     pub workspace: Workspace,
     pub result: HealthResult,
 }
 
+/// What to check and where. The thresholds are the limits a declaration has
+/// to exceed to be reported; `exclude_tests` decides whether test projects are
+/// looked at in the first place.
 #[derive(Debug, Clone, Copy)]
 pub struct Thresholds {
     pub max_cognitive: u32,
@@ -27,6 +34,21 @@ pub struct Thresholds {
     pub max_parameters: u32,
     pub max_file_lines: u32,
     pub max_type_members: u32,
+    pub exclude_tests: bool,
+}
+
+impl From<EffectiveHealth> for Thresholds {
+    fn from(effective: EffectiveHealth) -> Self {
+        Thresholds {
+            max_cognitive: effective.max_cognitive,
+            max_complexity: effective.max_complexity,
+            max_method_lines: effective.max_method_lines,
+            max_parameters: effective.max_parameters,
+            max_file_lines: effective.max_file_lines,
+            max_type_members: effective.max_type_members,
+            exclude_tests: effective.exclude_tests,
+        }
+    }
 }
 
 /// The full health pipeline: discover → extract → symbol table → reference
@@ -43,7 +65,10 @@ pub fn analyze(root: &Path, thresholds: Thresholds) -> anyhow::Result<Analysis> 
 /// Ignore filtering happens after resolution, not at the file-list stage the
 /// way `dupes` does it — `resolve::build_symbols` and `graph::build_graph`
 /// both index into `workspace.files` by raw `FileId`, so dropping entries
-/// beforehand would desync those positions.
+/// beforehand would desync those positions. Hotspots are the exception: they
+/// are scored relative to each other, so ignored files have to be dropped
+/// before ranking rather than after, or they would skew the normalization and
+/// eat slots in the `--top` list.
 fn analyze_inner(
     root: &Path,
     thresholds: Thresholds,
@@ -67,40 +92,58 @@ fn analyze_inner(
         thresholds,
     );
 
+    // Built once, up front, because both the finding filter and the hotspot
+    // ranking need it and the ranking needs it *before* it runs.
+    let ignore_set = match ignore {
+        Some((patterns, config_dir)) => {
+            let mut warnings = Vec::new();
+            let set = config::build_ignore_globset(config_dir, patterns, &mut warnings);
+            workspace.warnings.append(&mut warnings);
+
+            set
+        }
+        None => None,
+    };
+
     let mut ranked = Vec::new();
     let mut commits_walked = None;
 
     if let Some(top) = hotspots {
-        let (hotspots, walked, mut warnings) = collect_hotspots(&workspace, &facts, top)?;
+        let (hotspots, walked, mut warnings) =
+            collect_hotspots(&workspace, &facts, top, ignore_set.as_ref(), thresholds)?;
         ranked = hotspots;
         commits_walked = Some(walked);
         workspace.warnings.append(&mut warnings);
     }
 
-    if let Some((patterns, config_dir)) = ignore {
-        let mut warnings = Vec::new();
-        if let Some(set) = config::build_ignore_globset(config_dir, patterns, &mut warnings) {
-            findings.retain(|finding| !set.is_match(&finding.file));
-            cycles.retain(|cycle| {
-                cycle
-                    .members
-                    .iter()
-                    .all(|member| !set.is_match(&member.file))
-            });
-            ranked.retain(|hotspot| !set.is_match(&hotspot.file));
-        }
-        workspace.warnings.append(&mut warnings);
+    if let Some(set) = &ignore_set {
+        findings.retain(|finding| !set.is_match(&finding.file));
+        cycles.retain(|cycle| {
+            cycle
+                .path
+                .iter()
+                .chain(&cycle.others)
+                .all(|member| !set.is_match(&member.file))
+        });
     }
 
-    let mut summary = summarize(&workspace, &resolution, &findings, &cycles, start.elapsed());
-    summary.commits_walked = commits_walked;
-
-    let result = HealthResult {
+    let mut result = HealthResult {
         findings,
         cycles,
         hotspots: ranked,
-        summary,
+        summary: HealthSummary::default(),
     };
+
+    suppress::apply_inline_suppressions_health(&mut result, &mut workspace);
+
+    result.summary = summarize(
+        &workspace,
+        &resolution,
+        &result.findings,
+        &result.cycles,
+        start.elapsed(),
+    );
+    result.summary.commits_walked = commits_walked;
 
     Ok(Analysis { workspace, result })
 }
@@ -110,27 +153,40 @@ fn analyze_inner(
 ///
 /// Generated files are excluded — they change whenever their generator runs,
 /// which would put them at the top of every list without telling anyone
-/// anything.
+/// anything. Ignored and (optionally) test files are excluded here rather
+/// than from the ranked output, because `hotspot::rank` normalizes every
+/// score against the highest one it is given: filtering afterwards would both
+/// leave the surviving scores measured against a file the user excluded and
+/// return fewer than `top` rows.
 fn collect_hotspots(
     workspace: &Workspace,
     facts: &[extract::FileFacts],
     top: usize,
+    ignore: Option<&GlobSet>,
+    thresholds: Thresholds,
 ) -> anyhow::Result<(Vec<Hotspot>, usize, Vec<String>)> {
     let churn = churn::analyze(&workspace.root)?;
 
     let candidates: Vec<hotspot::Candidate> = facts
         .iter()
         .filter(|file_facts| !file_facts.is_generated)
-        .map(|file_facts| {
+        .filter_map(|file_facts| {
             let file = &workspace.files[file_facts.file.index()];
 
-            hotspot::Candidate {
+            if ignore.is_some_and(|set| set.is_match(&file.path)) {
+                return None;
+            }
+            if thresholds.exclude_tests && in_test_project(workspace, file.project) {
+                return None;
+            }
+
+            Some(hotspot::Candidate {
                 file: file.path.clone(),
                 project: project_name(workspace, file.project),
                 cyclomatic: file_facts.decls.iter().map(|decl| decl.cyclomatic).sum(),
                 lines: file_facts.line_count,
                 weighted_commits: churn.weight(&file.path),
-            }
+            })
         })
         .collect();
 
@@ -139,6 +195,10 @@ fn collect_hotspots(
         churn.commits_walked,
         churn.warnings,
     ))
+}
+
+fn in_test_project(workspace: &Workspace, project: Option<ProjectId>) -> bool {
+    project.is_some_and(|id| workspace.projects[id.index()].is_test())
 }
 
 /// Member-level (complexity, method length, parameter count), file-level
@@ -161,15 +221,20 @@ fn collect_findings(
         }
 
         let file = &workspace.files[file_facts.file.index()];
+        if thresholds.exclude_tests && in_test_project(workspace, file.project) {
+            continue;
+        }
+
         let project = project_name(workspace, file.project);
         let local_map = &resolution.decl_map[file_facts.file.index()];
+        let names = member_names(resolution, file_facts, local_map, rodeo);
 
         for (local_index, decl) in file_facts.decls.iter().enumerate() {
             if !decl.kind.is_member() || !decl.has_body {
                 continue;
             }
 
-            let name = resolution.display_name(local_map[local_index], rodeo);
+            let name = names[local_index].clone();
 
             if decl.cyclomatic > thresholds.max_complexity {
                 findings.push(HealthFinding {
@@ -181,6 +246,7 @@ fn collect_findings(
                     column: decl.column,
                     metric: decl.cyclomatic,
                     threshold: thresholds.max_complexity,
+                    breakdown: None,
                 });
             }
 
@@ -194,6 +260,7 @@ fn collect_findings(
                     column: decl.column,
                     metric: decl.cognitive,
                     threshold: thresholds.max_cognitive,
+                    breakdown: None,
                 });
             }
 
@@ -207,6 +274,7 @@ fn collect_findings(
                     column: decl.column,
                     metric: decl.body_lines,
                     threshold: thresholds.max_method_lines,
+                    breakdown: None,
                 });
             }
 
@@ -220,6 +288,7 @@ fn collect_findings(
                     column: decl.column,
                     metric: decl.parameter_count,
                     threshold: thresholds.max_parameters,
+                    breakdown: None,
                 });
             }
         }
@@ -238,18 +307,25 @@ fn collect_findings(
                 column: 1,
                 metric: file_facts.line_count,
                 threshold: thresholds.max_file_lines,
+                breakdown: None,
             });
         }
     }
 
-    let mut member_counts: FxHashMap<SymbolId, u32> = FxHashMap::default();
+    // Kept as a breakdown rather than a bare count so the report can say what
+    // the members *are*: thirty auto-properties is a data holder, thirty
+    // methods is a god class, and only one of those is worth acting on.
+    let mut member_counts: FxHashMap<SymbolId, MemberBreakdown> = FxHashMap::default();
     for symbol in &resolution.symbols {
-        if symbol.kind.is_member()
-            && !symbol.flags.contains(SymbolFlags::GENERATED)
-            && let Some(parent) = symbol.parent
-        {
-            *member_counts.entry(parent).or_default() += 1;
+        if symbol.flags.contains(SymbolFlags::GENERATED) {
+            continue;
         }
+
+        let (SymbolKind::Member(kind), Some(parent)) = (symbol.kind, symbol.parent) else {
+            continue;
+        };
+
+        member_counts.entry(parent).or_default().record(kind);
     }
 
     // Type-level dependency edges. Not reported as a finding of their own —
@@ -262,12 +338,15 @@ fn collect_findings(
             continue;
         }
 
-        let member_count = member_counts.get(&symbol.id).copied().unwrap_or(0);
-        if member_count <= thresholds.max_type_members {
+        let breakdown = member_counts.get(&symbol.id).copied().unwrap_or_default();
+        if breakdown.total() <= thresholds.max_type_members {
             continue;
         }
 
         let file = &workspace.files[symbol.file.index()];
+        if thresholds.exclude_tests && in_test_project(workspace, file.project) {
+            continue;
+        }
 
         findings.push(HealthFinding {
             kind: HealthFindingKind::LargeType,
@@ -276,8 +355,9 @@ fn collect_findings(
             file: file.path.clone(),
             line: symbol.line,
             column: symbol.column,
-            metric: member_count,
+            metric: breakdown.total(),
             threshold: thresholds.max_type_members,
+            breakdown: Some(breakdown),
         });
     }
 
@@ -288,17 +368,26 @@ fn collect_findings(
             .then(a.column.cmp(&b.column))
     });
 
+    let is_generated = |&id: &SymbolId| {
+        resolution.symbols[id.index()]
+            .flags
+            .contains(SymbolFlags::GENERATED)
+    };
+
+    // A cycle that touches generated code anywhere — on the printed path or
+    // merely tangled alongside it — is the generator's problem, so the whole
+    // component is dropped rather than partially reported.
     let cycles = coupling::find_cycles(&fan_out)
         .into_iter()
-        .filter(|members| {
-            members.iter().all(|&id| {
-                !resolution.symbols[id.index()]
-                    .flags
-                    .contains(SymbolFlags::GENERATED)
-            })
-        })
-        .map(|members| CircularDependency {
-            members: members
+        .filter(|cycle| !cycle.path.iter().chain(&cycle.others).any(is_generated))
+        .map(|cycle| CircularDependency {
+            path: cycle
+                .path
+                .into_iter()
+                .map(|id| cycle_member(resolution, workspace, rodeo, id))
+                .collect(),
+            others: cycle
+                .others
                 .into_iter()
                 .map(|id| cycle_member(resolution, workspace, rodeo, id))
                 .collect(),
@@ -306,6 +395,74 @@ fn collect_findings(
         .collect();
 
     (findings, cycles)
+}
+
+/// Display names for every declaration in one file, indexed by local decl
+/// index (non-members get an empty placeholder that nothing reads).
+///
+/// Overloads merge into a single symbol — `build_symbols` keys members on
+/// (type, name, kind) — so `display_name` returns the same string for
+/// `TryBeginActivation(Unit)` and `TryBeginActivation(Unit, Order)`, and a
+/// report listing both is two identical rows. Where that collision actually
+/// happens, the name gets a Roslyn-style `/arity` suffix. Where it doesn't,
+/// nothing is appended: an arity on a name with no overloads is noise.
+fn member_names(
+    resolution: &Resolution,
+    file_facts: &extract::FileFacts,
+    local_map: &[SymbolId],
+    rodeo: &ThreadedRodeo,
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::with_capacity(file_facts.decls.len());
+
+    for (local_index, decl) in file_facts.decls.iter().enumerate() {
+        if decl.kind.is_member() {
+            names.push(resolution.display_name(local_map[local_index], rodeo));
+        } else {
+            names.push(String::new());
+        }
+    }
+
+    let mut occurrences: FxHashMap<&str, u32> = FxHashMap::default();
+    for (name, decl) in names.iter().zip(&file_facts.decls) {
+        if takes_parameters(decl.kind) {
+            *occurrences.entry(name.as_str()).or_default() += 1;
+        }
+    }
+
+    let ambiguous: Vec<bool> = names
+        .iter()
+        .zip(&file_facts.decls)
+        .map(|(name, decl)| {
+            takes_parameters(decl.kind) && occurrences.get(name.as_str()).is_some_and(|&n| n > 1)
+        })
+        .collect();
+
+    for (local_index, is_ambiguous) in ambiguous.into_iter().enumerate() {
+        if is_ambiguous {
+            names[local_index].push_str(&format!(
+                "/{}",
+                file_facts.decls[local_index].parameter_count
+            ));
+        }
+    }
+
+    names
+}
+
+/// Whether an arity suffix means anything for this kind. Fields and
+/// properties have no parameter list, so `Foo/0` would be a lie dressed as
+/// precision.
+fn takes_parameters(kind: SymbolKind) -> bool {
+    matches!(
+        kind,
+        SymbolKind::Member(
+            MemberKind::Method
+                | MemberKind::Constructor
+                | MemberKind::Indexer
+                | MemberKind::Operator
+                | MemberKind::ConversionOperator
+        )
+    )
 }
 
 fn cycle_member(
@@ -365,15 +522,6 @@ pub fn run(args: &HealthArgs) -> anyhow::Result<ExitCode> {
         None => std::env::current_dir()?,
     };
 
-    let thresholds = Thresholds {
-        max_cognitive: args.max_cognitive,
-        max_complexity: args.max_complexity,
-        max_method_lines: args.max_method_lines,
-        max_parameters: args.max_parameters,
-        max_file_lines: args.max_file_lines,
-        max_type_members: args.max_type_members,
-    };
-
     let mut config_warnings = Vec::new();
     let resolved_config = match &args.config {
         Some(path) => Some(config::load_explicit(path)?),
@@ -400,8 +548,23 @@ pub fn run(args: &HealthArgs) -> anyhow::Result<ExitCode> {
             .map(|patterns| (patterns.as_slice(), resolved.dir.as_path()))
     });
 
+    let effective = config::merge_health(
+        resolved_config
+            .as_ref()
+            .and_then(|resolved| resolved.config.health.as_ref()),
+        config::HealthOverrides {
+            max_complexity: args.max_complexity,
+            max_cognitive: args.max_cognitive,
+            max_method_lines: args.max_method_lines,
+            max_parameters: args.max_parameters,
+            max_file_lines: args.max_file_lines,
+            max_type_members: args.max_type_members,
+            exclude_tests: args.exclude_tests,
+        },
+    );
+
     let hotspots = args.hotspots.then_some(args.top);
-    let mut analysis = analyze_inner(&root, thresholds, hotspots, ignore)?;
+    let mut analysis = analyze_inner(&root, effective.into(), hotspots, ignore)?;
     analysis.workspace.warnings.append(&mut config_warnings);
 
     for warning in &analysis.workspace.warnings {
@@ -412,5 +575,7 @@ pub fn run(args: &HealthArgs) -> anyhow::Result<ExitCode> {
         &analysis.result,
         &analysis.workspace,
         args.format,
+        args.sort,
+        args.limit,
     ))
 }
