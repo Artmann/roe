@@ -19,6 +19,23 @@ pub struct RoeConfig {
     /// matching files have all their findings suppressed. A pattern ending in
     /// `/` also matches everything under that directory.
     pub ignore: Option<Vec<String>>,
+    /// Defaults for `roe health`'s thresholds, so a CI invocation doesn't have
+    /// to repeat six flags.
+    pub health: Option<HealthConfig>,
+}
+
+/// The `health` block of a config file. Every field is optional; an absent
+/// one falls back to the built-in default.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HealthConfig {
+    pub max_complexity: Option<u32>,
+    pub max_cognitive: Option<u32>,
+    pub max_method_lines: Option<u32>,
+    pub max_parameters: Option<u32>,
+    pub max_file_lines: Option<u32>,
+    pub max_type_members: Option<u32>,
+    pub exclude_tests: Option<bool>,
 }
 
 pub struct ResolvedConfig {
@@ -153,6 +170,97 @@ pub fn merge(
     }
 }
 
+/// `roe health` settings after applying default → config file → CLI flag
+/// precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectiveHealth {
+    pub max_complexity: u32,
+    pub max_cognitive: u32,
+    pub max_method_lines: u32,
+    pub max_parameters: u32,
+    pub max_file_lines: u32,
+    pub max_type_members: u32,
+    pub exclude_tests: bool,
+}
+
+impl Default for EffectiveHealth {
+    /// `max_complexity` of 10 traces back to McCabe's 1976 paper; the rest sit
+    /// near the values common C# linters use.
+    fn default() -> Self {
+        EffectiveHealth {
+            max_complexity: 10,
+            max_cognitive: 15,
+            max_method_lines: 40,
+            max_parameters: 5,
+            max_file_lines: 750,
+            max_type_members: 20,
+            exclude_tests: false,
+        }
+    }
+}
+
+/// Threshold precedence is a plain three-way fallback, which the `Option`
+/// typing on both sides makes explicit: an explicit CLI flag wins, then the
+/// config file's value, then the built-in default.
+///
+/// `exclude_tests` is OR'd rather than overridden, for the same reason
+/// `aggressive` is: clap's plain bool flag can only ever be `true`, so there
+/// is no `--no-exclude-tests` to override a config's `true` back to `false`.
+pub fn merge_health(config: Option<&HealthConfig>, cli: HealthOverrides) -> EffectiveHealth {
+    let defaults = EffectiveHealth::default();
+    let pick = |from_cli: Option<u32>, from_config: Option<u32>, fallback: u32| {
+        from_cli.or(from_config).unwrap_or(fallback)
+    };
+
+    EffectiveHealth {
+        max_complexity: pick(
+            cli.max_complexity,
+            config.and_then(|c| c.max_complexity),
+            defaults.max_complexity,
+        ),
+        max_cognitive: pick(
+            cli.max_cognitive,
+            config.and_then(|c| c.max_cognitive),
+            defaults.max_cognitive,
+        ),
+        max_method_lines: pick(
+            cli.max_method_lines,
+            config.and_then(|c| c.max_method_lines),
+            defaults.max_method_lines,
+        ),
+        max_parameters: pick(
+            cli.max_parameters,
+            config.and_then(|c| c.max_parameters),
+            defaults.max_parameters,
+        ),
+        max_file_lines: pick(
+            cli.max_file_lines,
+            config.and_then(|c| c.max_file_lines),
+            defaults.max_file_lines,
+        ),
+        max_type_members: pick(
+            cli.max_type_members,
+            config.and_then(|c| c.max_type_members),
+            defaults.max_type_members,
+        ),
+        exclude_tests: cli.exclude_tests || config.and_then(|c| c.exclude_tests).unwrap_or(false),
+    }
+}
+
+/// The subset of `HealthArgs` that participates in config merging — passed as
+/// a struct so the six same-typed thresholds can't be transposed at the call
+/// site.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HealthOverrides {
+    pub max_complexity: Option<u32>,
+    pub max_cognitive: Option<u32>,
+    pub max_method_lines: Option<u32>,
+    pub max_parameters: Option<u32>,
+    pub max_file_lines: Option<u32>,
+    pub max_type_members: Option<u32>,
+    pub exclude_tests: bool,
+}
+
 /// Builds a `GlobSet` from config-relative `ignore` glob patterns, resolved
 /// against `config_dir` (the config file's own directory). A trailing slash
 /// on a pattern reads as "this whole directory" without the user having to
@@ -274,6 +382,98 @@ mod tests {
     #[test]
     fn merge_defaults_library_projects_to_empty() {
         assert!(merge(None, false, &[], &[]).library_projects.is_empty());
+    }
+
+    #[test]
+    fn merge_health_prefers_the_cli_threshold_over_the_config() {
+        let config = HealthConfig {
+            max_complexity: Some(25),
+            ..Default::default()
+        };
+        let cli = HealthOverrides {
+            max_complexity: Some(7),
+            ..Default::default()
+        };
+        assert_eq!(merge_health(Some(&config), cli).max_complexity, 7);
+    }
+
+    #[test]
+    fn merge_health_falls_back_to_the_config_threshold() {
+        let config = HealthConfig {
+            max_complexity: Some(25),
+            ..Default::default()
+        };
+        assert_eq!(
+            merge_health(Some(&config), HealthOverrides::default()).max_complexity,
+            25
+        );
+    }
+
+    #[test]
+    fn merge_health_falls_back_to_the_built_in_defaults() {
+        assert_eq!(
+            merge_health(None, HealthOverrides::default()),
+            EffectiveHealth::default()
+        );
+    }
+
+    #[test]
+    fn merge_health_resolves_each_threshold_independently() {
+        // A config that sets only one threshold must not reset the others.
+        let config = HealthConfig {
+            max_file_lines: Some(2000),
+            ..Default::default()
+        };
+        let cli = HealthOverrides {
+            max_parameters: Some(3),
+            ..Default::default()
+        };
+        let effective = merge_health(Some(&config), cli);
+
+        assert_eq!(effective.max_file_lines, 2000);
+        assert_eq!(effective.max_parameters, 3);
+        assert_eq!(
+            effective.max_cognitive,
+            EffectiveHealth::default().max_cognitive
+        );
+    }
+
+    #[test]
+    fn merge_health_ors_exclude_tests() {
+        let config = HealthConfig {
+            exclude_tests: Some(false),
+            ..Default::default()
+        };
+        let cli = HealthOverrides {
+            exclude_tests: true,
+            ..Default::default()
+        };
+        assert!(merge_health(Some(&config), cli).exclude_tests);
+
+        let config = HealthConfig {
+            exclude_tests: Some(true),
+            ..Default::default()
+        };
+        assert!(merge_health(Some(&config), HealthOverrides::default()).exclude_tests);
+    }
+
+    #[test]
+    fn parses_a_health_block() {
+        let config: RoeConfig =
+            serde_json::from_str(r#"{"health": {"maxComplexity": 15, "excludeTests": true}}"#)
+                .expect("valid json");
+        let health = config.health.expect("a health block");
+
+        assert_eq!(health.max_complexity, Some(15));
+        assert_eq!(health.exclude_tests, Some(true));
+        assert_eq!(health.max_cognitive, None);
+    }
+
+    #[test]
+    fn rejects_unknown_health_fields() {
+        let error = serde_json::from_str::<RoeConfig>(r#"{"health": {"maxComplexty": 15}}"#)
+            .expect_err("typo should not be silently ignored");
+        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]

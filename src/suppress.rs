@@ -3,7 +3,68 @@ use std::path::{Path, PathBuf};
 use rustc_hash::FxHashMap;
 
 use crate::config::build_ignore_globset;
-use crate::model::{AnalysisResult, Finding, FindingKind, Summary, Workspace};
+use crate::model::{
+    AnalysisResult, Finding, FindingKind, HealthFindingKind, HealthResult, Summary, Workspace,
+};
+
+/// A rule namespace the inline markers can target. Each command has its own
+/// set of rule names, but the marker syntax and the file-wide behaviour are
+/// shared, so the parser below is generic over this rather than duplicated.
+pub trait SuppressibleKind: Copy + PartialEq {
+    /// The kebab-case rule name as it appears in JSON output and in an
+    /// `// roe-ignore-line` comment.
+    fn from_rule_name(token: &str) -> Option<Self>;
+
+    /// True for findings pinned at a synthetic line 1, which no marker could
+    /// realistically sit next to — a marker anywhere in the file suppresses
+    /// them instead.
+    fn is_file_wide(self) -> bool;
+
+    /// The accepted rule names, for the "unknown suppression rule" warning.
+    fn rule_names() -> &'static str;
+}
+
+impl SuppressibleKind for FindingKind {
+    fn from_rule_name(token: &str) -> Option<Self> {
+        match token {
+            "unused-type" => Some(FindingKind::UnusedType),
+            "unused-member" => Some(FindingKind::UnusedMember),
+            "unused-file" => Some(FindingKind::UnusedFile),
+            _ => None,
+        }
+    }
+
+    fn is_file_wide(self) -> bool {
+        self == FindingKind::UnusedFile
+    }
+
+    fn rule_names() -> &'static str {
+        "unused-type, unused-member, or unused-file"
+    }
+}
+
+impl SuppressibleKind for HealthFindingKind {
+    fn from_rule_name(token: &str) -> Option<Self> {
+        match token {
+            "high-complexity" => Some(HealthFindingKind::HighComplexity),
+            "high-cognitive-complexity" => Some(HealthFindingKind::HighCognitiveComplexity),
+            "long-method" => Some(HealthFindingKind::LongMethod),
+            "too-many-parameters" => Some(HealthFindingKind::TooManyParameters),
+            "large-file" => Some(HealthFindingKind::LargeFile),
+            "large-type" => Some(HealthFindingKind::LargeType),
+            _ => None,
+        }
+    }
+
+    fn is_file_wide(self) -> bool {
+        self == HealthFindingKind::LargeFile
+    }
+
+    fn rule_names() -> &'static str {
+        "high-complexity, high-cognitive-complexity, long-method, \
+         too-many-parameters, large-file, or large-type"
+    }
+}
 
 /// eslint-style inline suppression, always applied (no config needed).
 /// Re-reads each unique finding's source file once and looks for
@@ -14,17 +75,54 @@ use crate::model::{AnalysisResult, Finding, FindingKind, Summary, Workspace};
 /// line 1/column 1, a marker targeting `unused-file` (or a bare marker)
 /// suppresses that file's dead-file finding no matter which line it sits on.
 pub fn apply_inline_suppressions(result: &mut AnalysisResult, workspace: &mut Workspace) {
-    let mut cache: FxHashMap<PathBuf, FileSuppressions> = FxHashMap::default();
-    result.findings.retain(|finding| {
-        let suppressions = cache.entry(finding.file.clone()).or_insert_with(|| {
-            match std::fs::read_to_string(&finding.file) {
-                Ok(source) => parse_suppressions(&source, &finding.file, &mut workspace.warnings),
+    let mut cache: SuppressionCache<FindingKind> = SuppressionCache::default();
+    result
+        .findings
+        .retain(|finding| !cache.suppresses(&finding.file, finding.line, finding.kind, workspace));
+    recount(&result.findings, &mut result.summary);
+}
+
+/// The same markers, applied to `roe health`. `large-file` is the file-wide
+/// rule here, for the same reason `unused-file` is above.
+///
+/// Circular dependencies are deliberately not suppressible this way: a cycle
+/// spans several types in several files, so there is no one line a marker
+/// could sit on. Use a config `ignore` glob instead — the same call the
+/// `dupes` command makes for the same reason.
+pub fn apply_inline_suppressions_health(result: &mut HealthResult, workspace: &mut Workspace) {
+    let mut cache: SuppressionCache<HealthFindingKind> = SuppressionCache::default();
+    result
+        .findings
+        .retain(|finding| !cache.suppresses(&finding.file, finding.line, finding.kind, workspace));
+}
+
+/// Parsed suppressions per source file, so a file with several findings is
+/// only read and scanned once.
+struct SuppressionCache<K: SuppressibleKind> {
+    files: FxHashMap<PathBuf, FileSuppressions<K>>,
+}
+
+impl<K: SuppressibleKind> Default for SuppressionCache<K> {
+    fn default() -> Self {
+        SuppressionCache {
+            files: FxHashMap::default(),
+        }
+    }
+}
+
+impl<K: SuppressibleKind> SuppressionCache<K> {
+    /// An unreadable file suppresses nothing — reporting the finding is the
+    /// safe direction, and discovery has already warned about the file.
+    fn suppresses(&mut self, file: &Path, line: u32, kind: K, workspace: &mut Workspace) -> bool {
+        let suppressions = self.files.entry(file.to_path_buf()).or_insert_with(|| {
+            match std::fs::read_to_string(file) {
+                Ok(source) => parse_suppressions(&source, file, &mut workspace.warnings),
                 Err(_) => FileSuppressions::default(),
             }
         });
-        !suppressions.suppresses(finding.line, finding.kind)
-    });
-    recount(&result.findings, &mut result.summary);
+
+        suppressions.suppresses(line, kind)
+    }
 }
 
 /// Config-driven ignore list: glob patterns (relative to `config_dir`) whose
@@ -60,40 +158,64 @@ fn recount(findings: &[Finding], summary: &mut Summary) {
 }
 
 #[derive(Debug, Clone)]
-enum RuleFilter {
+enum RuleFilter<K> {
     Any,
-    Only(Vec<FindingKind>),
+    Only(Vec<K>),
 }
 
-impl RuleFilter {
-    fn matches(&self, kind: FindingKind) -> bool {
+impl<K: SuppressibleKind> RuleFilter<K> {
+    fn matches(&self, kind: K) -> bool {
         match self {
             RuleFilter::Any => true,
             RuleFilter::Only(kinds) => kinds.contains(&kind),
         }
     }
-}
 
-#[derive(Debug, Default)]
-struct FileSuppressions {
-    by_line: FxHashMap<u32, Vec<RuleFilter>>,
-    /// Filters from a marker anywhere in the file that target `UnusedFile`
-    /// (explicitly or via a bare marker) — see the file-level doc comment.
-    file_wide: Vec<RuleFilter>,
-}
-
-impl FileSuppressions {
-    fn suppresses(&self, line: u32, kind: FindingKind) -> bool {
-        if kind == FindingKind::UnusedFile && self.file_wide.iter().any(|f| f.matches(kind)) {
-            return true;
+    /// Whether this filter could suppress a file-wide finding, and so needs
+    /// to be remembered beyond the line it was written on.
+    fn targets_file_wide(&self) -> bool {
+        match self {
+            RuleFilter::Any => true,
+            RuleFilter::Only(kinds) => kinds.iter().any(|kind| kind.is_file_wide()),
         }
-        self.by_line
-            .get(&line)
-            .is_some_and(|filters| filters.iter().any(|f| f.matches(kind)))
     }
 }
 
-fn parse_suppressions(source: &str, file: &Path, warnings: &mut Vec<String>) -> FileSuppressions {
+#[derive(Debug)]
+struct FileSuppressions<K> {
+    by_line: FxHashMap<u32, Vec<RuleFilter<K>>>,
+    /// Filters from a marker anywhere in the file that target a file-wide
+    /// kind (explicitly or via a bare marker) — see the file-level doc
+    /// comment.
+    file_wide: Vec<RuleFilter<K>>,
+}
+
+impl<K> Default for FileSuppressions<K> {
+    fn default() -> Self {
+        FileSuppressions {
+            by_line: FxHashMap::default(),
+            file_wide: Vec::new(),
+        }
+    }
+}
+
+impl<K: SuppressibleKind> FileSuppressions<K> {
+    fn suppresses(&self, line: u32, kind: K) -> bool {
+        if kind.is_file_wide() && self.file_wide.iter().any(|filter| filter.matches(kind)) {
+            return true;
+        }
+
+        self.by_line
+            .get(&line)
+            .is_some_and(|filters| filters.iter().any(|filter| filter.matches(kind)))
+    }
+}
+
+fn parse_suppressions<K: SuppressibleKind>(
+    source: &str,
+    file: &Path,
+    warnings: &mut Vec<String>,
+) -> FileSuppressions<K> {
     let mut result = FileSuppressions::default();
     for (index, line) in source.lines().enumerate() {
         let line_no = index as u32 + 1;
@@ -111,7 +233,7 @@ fn parse_suppressions(source: &str, file: &Path, warnings: &mut Vec<String>) -> 
             };
 
         let filter = parse_rule_filter(marker_rest, file, line_no, warnings);
-        if filter.matches(FindingKind::UnusedFile) {
+        if filter.targets_file_wide() {
             result.file_wide.push(filter.clone());
         }
         result.by_line.entry(target_line).or_default().push(filter);
@@ -123,40 +245,34 @@ fn parse_suppressions(source: &str, file: &Path, warnings: &mut Vec<String>) -> 
 /// whitespace-separated token is the (optional) comma-separated rule list;
 /// anything after that is treated as free-form trailing note text and
 /// ignored. An empty/absent rule list means "suppress any finding kind."
-fn parse_rule_filter(
+fn parse_rule_filter<K: SuppressibleKind>(
     remainder: &str,
     file: &Path,
     line_no: u32,
     warnings: &mut Vec<String>,
-) -> RuleFilter {
+) -> RuleFilter<K> {
     let rule_list = remainder.split_whitespace().next().unwrap_or("");
     if rule_list.is_empty() {
         return RuleFilter::Any;
     }
+
     let mut kinds = Vec::new();
     for token in rule_list.split(',') {
         let token = token.trim();
         if token.is_empty() {
             continue;
         }
-        match parse_kind(token) {
+        match K::from_rule_name(token) {
             Some(kind) => kinds.push(kind),
             None => warnings.push(format!(
-                "unknown suppression rule '{token}' at {}:{line_no} (expected unused-type, unused-member, or unused-file)",
-                file.display()
+                "unknown suppression rule '{token}' at {}:{line_no} (expected {})",
+                file.display(),
+                K::rule_names()
             )),
         }
     }
-    RuleFilter::Only(kinds)
-}
 
-fn parse_kind(token: &str) -> Option<FindingKind> {
-    match token {
-        "unused-type" => Some(FindingKind::UnusedType),
-        "unused-member" => Some(FindingKind::UnusedMember),
-        "unused-file" => Some(FindingKind::UnusedFile),
-        _ => None,
-    }
+    RuleFilter::Only(kinds)
 }
 
 #[cfg(test)]

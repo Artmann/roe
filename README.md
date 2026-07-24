@@ -165,11 +165,23 @@ work with, not code to delete.
 $ roe health path/to/solution
 
 src/App/Billing/InvoiceService.cs (App)
-    42:12  high complexity  App.Billing.InvoiceService.Reconcile cyclomatic complexity 14 (max 10)
+    42:12  App.Billing.InvoiceService.Reconcile
+           cyclomatic 46/10 · cognitive 86/15 · 242/40 lines
+    18:14  App.Billing.InvoiceService
+           34/20 members (19 properties, 15 methods)
 
-found 1 issue — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 68 ms
-  1 complex method · 0 hard-to-follow methods · 0 long methods · 0 over-parameterized methods · 0 large files · 0 large types · 0 circular dependencies
+src/App/Orders/OrderValidator.cs (App)
+   112:17  App.Orders.OrderValidator.Validate
+           cyclomatic 14/10
+
+found 4 issues across 3 locations in 2 files — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 68 ms
+  2 complex methods · 1 hard-to-follow method · 1 long method · 0 over-parameterized methods · 0 large files · 1 large type · 0 circular dependencies
 ```
+
+Each entry is one declaration, listing every check it tripped — a method
+that's too long *and* too branchy is one thing to fix, so it's one line
+rather than three. Every measurement reads `actual/limit`. The headline
+counts both, since they differ: 4 issues, but only 3 places to go.
 
 ```
 roe health [PATH]                  # directory, .sln, or .csproj (default: cwd)
@@ -180,10 +192,24 @@ roe health --max-method-lines 40   # lines per method body (default: 40)
 roe health --max-parameters 5      # parameters per method (default: 5)
 roe health --max-file-lines 750    # lines per file (default: 750)
 roe health --max-type-members 20   # declared members per type (default: 20)
+roe health --exclude-tests         # skip test projects (default: off)
+roe health --sort path             # order by file path instead of by severity
+roe health --limit 20              # print at most 20 entries (default: all)
 roe health --hotspots              # also rank complex, frequently changed files
 roe health --hotspots --top 20     # how many to list (default: 10)
 roe health --config PATH           # use this roe.json/roe.yaml instead of auto-discovery
 ```
+
+Entries are ordered worst-first by default — how many times over its limit
+each measurement sits, which is comparable across checks in a way the raw
+numbers are not. `--sort path` gives you stable, position-ordered output
+instead. `--limit` caps the human report only; `--format json` always
+contains everything.
+
+`--exclude-tests` skips test projects entirely. Long arrange/act/assert
+methods and multi-case fixtures are normal there, and a test class is
+supposed to have one method per case. It's off by default so nothing goes
+unreported without you asking.
 
 Declarations in generated files are never flagged, and the same `ignore`
 globs from a config file apply here too.
@@ -197,8 +223,32 @@ globs from a config file apply here too.
 | **long method** | Lines spanned by a method body. | Extract Method along the seams — usually the comment-delimited "sections" of the body are the extractions waiting to happen. |
 | **too many parameters** | Parameters in a method's declaration. | Introduce a Parameter Object: bundle the arguments that always travel together into a `record`, so `Send(string to, string cc, string subject, string body, bool html, int retries)` becomes `Send(EmailMessage message)`. If several belong to the same existing object, Preserve Whole Object and pass that instead. |
 | **large file** | Total lines in a `.cs` file. | Usually a symptom rather than a cause — split the file per type, or move nested helper types into their own files. |
-| **large type** | Declared members on a type. | Extract Class: find the cluster of fields and the methods that touch only those fields, and move them out together. A type doing two jobs usually shows up as two such clusters. |
+| **large type** | Declared members on a type — methods, properties, fields, and events. An enum's cases don't count, since having many of them is the point of an enum. | Extract Class: find the cluster of fields and the methods that touch only those fields, and move them out together. A type doing two jobs usually shows up as two such clusters. |
 | **circular dependency** | Types that reference each other, directly or through a longer chain. | Break the loop by depending on an abstraction: extract an interface that one side owns and the other implements (Dependency Inversion), or move the shared concept both sides need into a third type neither one owns. |
+
+A `large type` entry carries the breakdown of what its members actually are —
+`34/20 members (19 properties, 15 methods)`. Thirty auto-properties is a data
+holder and thirty methods is a god class; they trip the same threshold and
+call for entirely different responses, so roe reports the split rather than
+guessing which one you have.
+
+A `circular dependency` prints a real cycle: consecutive names are joined by
+an actual reference, and the last one references the first. Types caught in
+the same tangle but not on that particular loop are listed separately, since
+putting them in the arrow chain would claim references that may not exist:
+
+```
+circular dependencies
+  App.Orders.Order → App.Orders.Cart → App.Orders.Order
+    src/App/Orders/Order.cs 12:14
+    src/App/Orders/Cart.cs 9:14
+    + 2 more types in this cycle: App.Orders.Line, App.Orders.Tax
+```
+
+Where a file declares two overloads that both trip a check, the entries carry
+a Roslyn-style arity suffix (`TryBeginActivation/0`, `TryBeginActivation/1`)
+so they can be told apart. The suffix appears only where there's an actual
+collision.
 
 Note that complexity, length, and member-count thresholds are conventions,
 not laws — the defaults sit near the values common linters use,
@@ -281,11 +331,21 @@ public void DoWork()
 
 `roe-ignore-next-line` suppresses a finding on the line below the comment;
 `roe-ignore-line` suppresses one on the same line. Both take an optional
-comma-separated rule list (`unused-type`, `unused-member`, `unused-file` — the
-same names used in JSON output); omitting it suppresses any finding kind on
-that line. Because a dead file's finding is pinned at line 1, an
-`unused-file` marker (or a bare marker) suppresses it from anywhere in the
-file.
+comma-separated rule list — the same names used in JSON output — and omitting
+it suppresses any finding kind on that line:
+
+| Command | Rule names |
+| --- | --- |
+| `roe dead-code` | `unused-type`, `unused-member`, `unused-file` |
+| `roe health` | `high-complexity`, `high-cognitive-complexity`, `long-method`, `too-many-parameters`, `large-file`, `large-type` |
+
+Because a dead file's finding and a large file's finding are both pinned at
+line 1, an `unused-file` or `large-file` marker (or a bare marker) suppresses
+them from anywhere in the file.
+
+Circular dependencies can't be suppressed inline — a cycle spans several
+types in several files, so there's no one line for the marker to sit on. Use
+an `ignore` glob instead, the same as for `roe dupes`.
 
 **A config file** — `roe.json`, `roe.yaml`, or `roe.yml` — resolved by
 walking up from the analysis root to the nearest directory containing one
@@ -296,7 +356,16 @@ walking up from the analysis root to the nearest directory containing one
   "aggressive": true,
   "roots": ["MyApp.Program.Main"],
   "libraryProjects": ["MyLib"],
-  "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"]
+  "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"],
+  "health": {
+    "maxComplexity": 15,
+    "maxCognitive": 20,
+    "maxMethodLines": 60,
+    "maxParameters": 6,
+    "maxFileLines": 750,
+    "maxTypeMembers": 25,
+    "excludeTests": true
+  }
 }
 ```
 
@@ -309,6 +378,12 @@ config's value applies, otherwise the built-in default (`false` / no extra
 roots / no extra library projects). The same `ignore` list also applies to
 `roe dupes`, since a duplicate spans multiple files and doesn't map cleanly
 onto a single-line inline suppression comment.
+
+The `health` block does the same for `roe health`'s thresholds, so a CI
+invocation doesn't have to repeat six flags — an explicit flag wins, then the
+config value, then the built-in default. Every field is optional, and an
+unrecognised one is an error rather than a silent no-op, so a typo can't leave
+you thinking a limit is in force when it isn't.
 
 ## Known limitations
 

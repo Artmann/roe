@@ -7,6 +7,7 @@
 //! outgoing dependency count is normal in constructor-injected C#, so the
 //! count says little about whether a type is actually hard to work with.
 
+use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -64,21 +65,133 @@ struct Frame {
     next: usize,
 }
 
-/// Strongly-connected components (size > 1) of the type-level fan-out
-/// graph — each is a set of types whose dependencies form a cycle. Uses
-/// Tarjan's algorithm with an explicit work stack instead of recursion, so
-/// it can't blow the stack on a codebase with a long dependency chain.
-pub fn find_cycles(fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>) -> Vec<Vec<SymbolId>> {
+/// One circular dependency: a real cycle, plus whatever else is tangled with
+/// it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Cycle {
+    /// Consecutive entries are joined by an actual edge, and the last entry
+    /// has an edge back to the first. Never empty, never shorter than 2.
+    pub path: Vec<SymbolId>,
+    /// Members of the same strongly-connected component that `path` does not
+    /// visit, ascending. Sorted for determinism.
+    pub others: Vec<SymbolId>,
+}
+
+/// Circular dependencies in the type-level fan-out graph.
+///
+/// Finding the components is Tarjan's algorithm, with an explicit work stack
+/// instead of recursion so it can't blow the stack on a codebase with a long
+/// dependency chain. Reporting them is the harder half: a strongly-connected
+/// component is *not* generally a cycle you can walk through every member
+/// exactly once, so listing an SCC's members joined by arrows would claim
+/// edges that need not exist. Each component is therefore reduced to the
+/// shortest genuine cycle through its lowest-id member, with the members that
+/// cycle misses carried alongside in [`Cycle::others`].
+pub fn find_cycles(fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>) -> Vec<Cycle> {
+    components(fan_out)
+        .into_iter()
+        .map(|component| shortest_cycle(fan_out, &component))
+        .collect()
+}
+
+/// The shortest cycle through `component`'s lowest-id member, found by BFS
+/// restricted to the component. Such a cycle always exists: every member of a
+/// strongly-connected component of size > 1 lies on one.
+fn shortest_cycle(
+    fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>,
+    component: &[SymbolId],
+) -> Cycle {
+    let members: FxHashSet<SymbolId> = component.iter().copied().collect();
+    let anchor = *component
+        .iter()
+        .min()
+        .expect("a strongly-connected component is never empty");
+
+    let empty: FxHashSet<SymbolId> = FxHashSet::default();
+    let mut previous: FxHashMap<SymbolId, SymbolId> = FxHashMap::default();
+    let mut queue: VecDeque<SymbolId> = VecDeque::from([anchor]);
+    let mut path = Vec::new();
+
+    'search: while let Some(node) = queue.pop_front() {
+        // Ties inside a BFS layer are broken by id so the reported cycle is
+        // the same on every run and every platform, regardless of how the
+        // neighbour set happens to iterate.
+        let mut neighbors: Vec<SymbolId> = fan_out
+            .get(&node)
+            .unwrap_or(&empty)
+            .iter()
+            .copied()
+            .filter(|neighbor| members.contains(neighbor))
+            .collect();
+        neighbors.sort();
+
+        for neighbor in neighbors {
+            if neighbor == anchor {
+                path = walk_back(&previous, anchor, node);
+                break 'search;
+            }
+            if previous.contains_key(&neighbor) {
+                continue;
+            }
+            previous.insert(neighbor, node);
+            queue.push_back(neighbor);
+        }
+    }
+
+    debug_assert!(
+        path.len() >= 2,
+        "every member of a multi-node SCC lies on a cycle"
+    );
+
+    let on_path: FxHashSet<SymbolId> = path.iter().copied().collect();
+    let mut others: Vec<SymbolId> = component
+        .iter()
+        .copied()
+        .filter(|id| !on_path.contains(id))
+        .collect();
+    others.sort();
+
+    Cycle { path, others }
+}
+
+/// Reconstruct `anchor → … → last` by following the BFS parent chain back.
+fn walk_back(
+    previous: &FxHashMap<SymbolId, SymbolId>,
+    anchor: SymbolId,
+    last: SymbolId,
+) -> Vec<SymbolId> {
+    let mut path = vec![last];
+    let mut current = last;
+
+    while current != anchor {
+        current = previous[&current];
+        path.push(current);
+    }
+
+    path.reverse();
+
+    path
+}
+
+/// Strongly-connected components of size > 1 — each a set of types whose
+/// dependencies form a cycle.
+fn components(fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>) -> Vec<Vec<SymbolId>> {
     let empty: FxHashSet<SymbolId> = FxHashSet::default();
     let neighbors_of = |id: SymbolId| -> Vec<SymbolId> {
         fan_out.get(&id).unwrap_or(&empty).iter().copied().collect()
     };
 
-    let mut nodes: FxHashSet<SymbolId> = FxHashSet::default();
+    let mut node_set: FxHashSet<SymbolId> = FxHashSet::default();
     for (&from, targets) in fan_out {
-        nodes.insert(from);
-        nodes.extend(targets.iter().copied());
+        node_set.insert(from);
+        node_set.extend(targets.iter().copied());
     }
+
+    // Tarjan finds the same components whatever order it starts in, but the
+    // order it *emits* them follows the traversal. Seeding from a sorted list
+    // keeps the report stable across runs and platforms.
+    let mut nodes: Vec<SymbolId> = node_set.into_iter().collect();
+    nodes.sort();
 
     let mut next_index = 0u32;
     let mut indices: FxHashMap<SymbolId, u32> = FxHashMap::default();
@@ -162,6 +275,7 @@ pub fn find_cycles(fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>) -> Vec<Ve
                             }
                         }
                         if component.len() > 1 {
+                            component.sort();
                             components.push(component);
                         }
                     }
@@ -169,6 +283,8 @@ pub fn find_cycles(fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>) -> Vec<Ve
             }
         }
     }
+
+    components.sort_by(|a, b| a[0].cmp(&b[0]));
 
     components
 }
@@ -188,15 +304,35 @@ mod tests {
             .collect()
     }
 
+    /// Every consecutive pair in the reported path — including the wrap from
+    /// the last member back to the first — must be a real edge. This is the
+    /// property the old SCC-in-pop-order output silently violated.
+    fn assert_path_is_a_real_cycle(
+        cycle: &Cycle,
+        fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>,
+    ) {
+        assert!(cycle.path.len() >= 2, "a cycle needs at least two members");
+
+        for (index, &from) in cycle.path.iter().enumerate() {
+            let to = cycle.path[(index + 1) % cycle.path.len()];
+            assert!(
+                fan_out
+                    .get(&from)
+                    .is_some_and(|targets| targets.contains(&to)),
+                "{from:?} -> {to:?} is not a real edge"
+            );
+        }
+    }
+
     #[test]
     fn two_cycle_is_detected() {
         // A -> B -> A
         let fan_out = graph(&[(1, &[2]), (2, &[1])]);
         let cycles = find_cycles(&fan_out);
         assert_eq!(cycles.len(), 1);
-        let mut members = cycles[0].clone();
-        members.sort();
-        assert_eq!(members, vec![id(1), id(2)]);
+        assert_eq!(cycles[0].path, vec![id(1), id(2)]);
+        assert!(cycles[0].others.is_empty());
+        assert_path_is_a_real_cycle(&cycles[0], &fan_out);
     }
 
     #[test]
@@ -219,23 +355,57 @@ mod tests {
         let fan_out = graph(&[(1, &[2]), (2, &[3]), (3, &[1])]);
         let cycles = find_cycles(&fan_out);
         assert_eq!(cycles.len(), 1);
-        let mut members = cycles[0].clone();
-        members.sort();
-        assert_eq!(members, vec![id(1), id(2), id(3)]);
+        assert_eq!(cycles[0].path, vec![id(1), id(2), id(3)]);
+        assert!(cycles[0].others.is_empty());
+        assert_path_is_a_real_cycle(&cycles[0], &fan_out);
     }
 
     #[test]
     fn disjoint_cycles_are_both_reported() {
         // A <-> B, and separately C <-> D.
         let fan_out = graph(&[(1, &[2]), (2, &[1]), (3, &[4]), (4, &[3])]);
-        let mut cycles = find_cycles(&fan_out);
-        cycles.sort_by_key(|c| *c.iter().min().unwrap());
+        let cycles = find_cycles(&fan_out);
         assert_eq!(cycles.len(), 2);
-        let mut first = cycles[0].clone();
-        first.sort();
-        assert_eq!(first, vec![id(1), id(2)]);
-        let mut second = cycles[1].clone();
-        second.sort();
-        assert_eq!(second, vec![id(3), id(4)]);
+        // Ordered by lowest member, with no sorting by the caller.
+        assert_eq!(cycles[0].path, vec![id(1), id(2)]);
+        assert_eq!(cycles[1].path, vec![id(3), id(4)]);
+    }
+
+    #[test]
+    fn a_component_with_no_hamiltonian_cycle_reports_a_real_path() {
+        // 1 <-> 2 and 2 <-> 3: one strongly-connected component of three
+        // types, but no cycle visits all three — 1 and 3 never touch. The old
+        // output printed "1 → 2 → 3 → 1", claiming two edges that don't exist.
+        let fan_out = graph(&[(1, &[2]), (2, &[1, 3]), (3, &[2])]);
+        let cycles = find_cycles(&fan_out);
+
+        assert_eq!(cycles.len(), 1);
+        assert_eq!(cycles[0].path, vec![id(1), id(2)]);
+        assert_eq!(cycles[0].others, vec![id(3)]);
+        assert_path_is_a_real_cycle(&cycles[0], &fan_out);
+    }
+
+    #[test]
+    fn the_shortest_cycle_through_the_anchor_wins() {
+        // 1 -> 2 -> 1 is available alongside the longer 1 -> 3 -> 4 -> 1.
+        let fan_out = graph(&[(1, &[2, 3]), (2, &[1]), (3, &[4]), (4, &[1])]);
+        let cycles = find_cycles(&fan_out);
+
+        assert_eq!(cycles.len(), 1);
+        assert_eq!(cycles[0].path, vec![id(1), id(2)]);
+        assert_eq!(cycles[0].others, vec![id(3), id(4)]);
+        assert_path_is_a_real_cycle(&cycles[0], &fan_out);
+    }
+
+    #[test]
+    fn a_four_cycle_keeps_every_member_on_the_path() {
+        // A -> B -> C -> D -> A, with nothing shorter available.
+        let fan_out = graph(&[(1, &[2]), (2, &[3]), (3, &[4]), (4, &[1])]);
+        let cycles = find_cycles(&fan_out);
+
+        assert_eq!(cycles.len(), 1);
+        assert_eq!(cycles[0].path, vec![id(1), id(2), id(3), id(4)]);
+        assert!(cycles[0].others.is_empty());
+        assert_path_is_a_real_cycle(&cycles[0], &fan_out);
     }
 }

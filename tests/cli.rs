@@ -349,6 +349,98 @@ fn health_findings_exit_code_1_and_human_output() {
     insta::assert_snapshot!("human_health_metrics", normalize(&output.stdout));
 }
 
+/// The threshold flags that make `health_metrics` produce findings, shared by
+/// the ordering tests below so they differ only in what they are testing.
+fn health_metrics_args() -> Vec<String> {
+    [
+        "health",
+        &fixture("health_metrics"),
+        "--max-cognitive",
+        "2",
+        "--max-complexity",
+        "3",
+        "--max-parameters",
+        "3",
+        "--max-type-members",
+        "3",
+    ]
+    .iter()
+    .map(|argument| argument.to_string())
+    .collect()
+}
+
+#[test]
+fn health_sort_path_orders_by_position_not_severity() {
+    let mut args = health_metrics_args();
+    args.extend(["--sort".to_string(), "path".to_string()]);
+
+    let output = roe().args(&args).output().expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    let widget = stdout.find("3:14").expect("Widget is reported");
+    let branchy = stdout.find("5:17").expect("Branchy is reported");
+    let many_params = stdout.find("17:17").expect("ManyParams is reported");
+    assert!(
+        widget < branchy && branchy < many_params,
+        "--sort path must follow line order, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn health_sort_severity_leads_with_the_worst_offender() {
+    let output = roe()
+        .args(health_metrics_args())
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+
+    // ManyParams is 2× its limit; Branchy is 1.5× and Widget 1.33×.
+    let stdout = normalize(&output.stdout);
+    let many_params = stdout.find("17:17").expect("ManyParams is reported");
+    let branchy = stdout.find("5:17").expect("Branchy is reported");
+    let widget = stdout.find("3:14").expect("Widget is reported");
+    assert!(
+        many_params < branchy && branchy < widget,
+        "severity sort must put the worst first, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn health_limit_caps_the_list_and_says_what_was_hidden() {
+    let mut args = health_metrics_args();
+    args.extend(["--limit".to_string(), "1".to_string()]);
+
+    let output = roe().args(&args).output().expect("command runs");
+    let stdout = normalize(&output.stdout);
+
+    assert!(stdout.contains("17:17"), "the worst finding still prints");
+    assert!(!stdout.contains("5:17"), "the rest are held back");
+    assert!(
+        stdout.contains("… and 2 more — re-run with --limit 0 to see all"),
+        "the footer must name what was hidden, got:\n{stdout}"
+    );
+    // Truncation is presentation only — the summary still counts everything.
+    assert!(stdout.contains("found 5 issues"));
+}
+
+#[test]
+fn health_grouping_reports_one_entry_per_declaration() {
+    let output = roe()
+        .args(health_metrics_args())
+        .output()
+        .expect("command runs");
+    let stdout = normalize(&output.stdout);
+
+    // Branchy trips both complexity checks, but is listed once.
+    assert_eq!(
+        stdout.matches("HealthMetrics.Widget.Branchy").count(),
+        1,
+        "one declaration is one entry, got:\n{stdout}"
+    );
+    assert!(stdout.contains("cyclomatic 4/3 · cognitive 3/2"));
+}
+
 #[test]
 fn health_json_output_is_stable() {
     let output = roe()

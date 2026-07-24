@@ -1,18 +1,19 @@
 ---
 source: tests/cli.rs
-assertion_line: 349
 expression: normalize(&output.stdout)
 ---
 HealthMetrics/Widget.cs (HealthMetrics)
-     3:14  large type       HealthMetrics.Widget 4 member(s) (max 3)
-     5:17  high complexity  HealthMetrics.Widget.Branchy cyclomatic complexity 4 (max 3)
-     5:17  hard to follow   HealthMetrics.Widget.Branchy cognitive complexity 3 (max 2)
-    17:17  too many params  HealthMetrics.Widget.ManyParams 6 parameter(s) (max 3)
+    17:17  HealthMetrics.Widget.ManyParams
+           6/3 params
+     5:17  HealthMetrics.Widget.Branchy
+           cyclomatic 4/3 · cognitive 3/2
+     3:14  HealthMetrics.Widget
+           4/3 members (4 methods)
 
 circular dependencies
   HealthMetrics.Alpha → HealthMetrics.Beta → HealthMetrics.Alpha
     HealthMetrics/Cycle.cs 3:14
     HealthMetrics/Cycle.cs 8:14
 
-found 5 issues — 1 project(s), 2 file(s), 15 symbol(s) scanned in <n> ms
+found 5 issues across 3 locations in 1 file — 1 project(s), 2 file(s), 15 symbol(s) scanned in <n> ms
   1 complex method · 1 hard-to-follow method · 0 long methods · 1 over-parameterized method · 0 large files · 1 large type · 1 circular dependency

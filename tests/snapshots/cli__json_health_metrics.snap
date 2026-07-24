@@ -1,6 +1,5 @@
 ---
 source: tests/cli.rs
-assertion_line: 376
 expression: stdout
 ---
 {
@@ -28,7 +27,13 @@ expression: stdout
       "line": 3,
       "column": 14,
       "metric": 4,
-      "threshold": 3
+      "threshold": 3,
+      "breakdown": {
+        "methods": 4,
+        "properties": 0,
+        "fields": 0,
+        "events": 0
+      }
     },
     {
       "kind": "high-complexity",
@@ -63,7 +68,7 @@ expression: stdout
   ],
   "cycles": [
     {
-      "members": [
+      "path": [
         {
           "name": "HealthMetrics.Alpha",
           "project": "HealthMetrics",
@@ -78,7 +83,8 @@ expression: stdout
           "line": 8,
           "column": 14
         }
-      ]
+      ],
+      "others": []
     }
   ],
   "hotspots": []
