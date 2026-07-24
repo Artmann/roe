@@ -316,3 +316,73 @@ fn malformed_config_exits_2() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("error:"));
 }
+
+#[test]
+fn health_clean_codebase_exits_0_with_default_thresholds() {
+    let output = roe()
+        .args(["health", &fixture("console_app")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no health issues found"));
+}
+
+#[test]
+fn health_findings_exit_code_1_and_human_output() {
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_metrics"),
+            "--max-cognitive",
+            "2",
+            "--max-complexity",
+            "3",
+            "--max-parameters",
+            "3",
+            "--max-type-members",
+            "3",
+        ])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    insta::assert_snapshot!("human_health_metrics", normalize(&output.stdout));
+}
+
+#[test]
+fn health_json_output_is_stable() {
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_metrics"),
+            "--format",
+            "json",
+            "--max-cognitive",
+            "2",
+            "--max-complexity",
+            "3",
+            "--max-parameters",
+            "3",
+            "--max-type-members",
+            "3",
+        ])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(parsed["version"], 1);
+    insta::assert_snapshot!("json_health_metrics", stdout);
+}
+
+#[test]
+fn health_invalid_path_exits_2() {
+    let output = roe()
+        .args(["health", "/definitely/not/a/real/path"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error:"));
+}

@@ -1,19 +1,17 @@
-pub mod dupes;
-pub mod health;
 mod human;
 mod json;
 
 use std::process::ExitCode;
 
 use crate::cli::OutputFormat;
-use crate::model::{AnalysisResult, Workspace};
+use crate::model::{HealthResult, Workspace};
 
-pub fn emit(result: &AnalysisResult, workspace: &Workspace, format: OutputFormat) -> ExitCode {
+pub fn emit(result: &HealthResult, workspace: &Workspace, format: OutputFormat) -> ExitCode {
     match format {
         OutputFormat::Human => human::print(result, workspace),
         OutputFormat::Json => json::print(result, workspace),
     }
-    if result.findings.is_empty() {
+    if result.findings.is_empty() && result.cycles.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)

@@ -1,12 +1,15 @@
 pub mod analyze;
+pub mod churn;
 pub mod cli;
 pub mod clone_extraction;
 pub mod commands;
 pub mod config;
+pub mod coupling;
 pub mod discover;
 pub mod entry_points;
 pub mod extract;
 pub mod graph;
+pub mod hotspot;
 pub mod model;
 pub mod paths;
 pub mod report;
@@ -26,6 +29,7 @@ pub fn run() -> ExitCode {
     let result = match cli.command {
         cli::Command::DeadCode(args) => commands::dead_code::run(&args),
         cli::Command::Dupes(args) => commands::dupes::run(&args),
+        cli::Command::Health(args) => commands::health::run(&args),
     };
 
     match result {

@@ -3,9 +3,9 @@
 # roe
 
 Codebase intelligence for C#. Finds dead code — unused types, members, and
-files — and duplicated code, so you can delete what's unused and de-duplicate
-what's copy-pasted. Static analysis only; roe never runs the code it
-analyzes.
+files — duplicated code, and complexity/coupling hotspots, so you can delete
+what's unused, de-duplicate what's copy-pasted, and clean up what's hard to
+work with. Static analysis only; roe never runs the code it analyzes.
 
 [![npm](https://img.shields.io/npm/v/roe-cli)](https://www.npmjs.com/package/roe-cli)
 [![NuGet](https://img.shields.io/nuget/v/roe)](https://www.nuget.org/packages/roe/)
@@ -71,9 +71,9 @@ xattr -d com.apple.quarantine ./roe
 
 ## Commands
 
-roe has two commands: `dead-code` and `dupes`. Both accept a path to a
-directory, a `.sln` file, or a `.csproj` file (default: the current
-directory), and both exit `0` when clean, `1` when they have findings to
+roe has three commands: `dead-code`, `dupes`, and `health`. All accept a path
+to a directory, a `.sln` file, or a `.csproj` file (default: the current
+directory), and all exit `0` when clean, `1` when they have findings to
 report, and `2` on error.
 
 ### `roe dead-code`
@@ -151,6 +151,116 @@ By default, `roe dupes` only matches code that's identical token-for-token.
 Pass `--mode semantic` to also catch blocks that were copied and then had
 their variable names or literal values changed, but are otherwise
 structurally the same.
+
+### `roe health`
+
+Flags complexity, size, and coupling problems: methods that branch or nest
+too heavily, files and types that have grown too large, and circular
+dependencies between types. With `--hotspots` it also reads git history to
+rank the files where complexity and change frequency overlap. Unlike
+`dead-code` and `dupes`, findings here are about code that's used but hard to
+work with, not code to delete.
+
+```
+$ roe health path/to/solution
+
+src/App/Billing/InvoiceService.cs (App)
+    42:12  high complexity  App.Billing.InvoiceService.Reconcile cyclomatic complexity 14 (max 10)
+
+found 1 issue — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 68 ms
+  1 complex method · 0 hard-to-follow methods · 0 long methods · 0 over-parameterized methods · 0 large files · 0 large types · 0 circular dependencies
+```
+
+```
+roe health [PATH]                  # directory, .sln, or .csproj (default: cwd)
+roe health --format json           # machine-readable, stable v1 schema
+roe health --max-complexity 10     # cyclomatic complexity per method (default: 10)
+roe health --max-cognitive 15      # cognitive complexity per method (default: 15)
+roe health --max-method-lines 40   # lines per method body (default: 40)
+roe health --max-parameters 5      # parameters per method (default: 5)
+roe health --max-file-lines 750    # lines per file (default: 750)
+roe health --max-type-members 20   # declared members per type (default: 20)
+roe health --hotspots              # also rank complex, frequently changed files
+roe health --hotspots --top 20     # how many to list (default: 10)
+roe health --config PATH           # use this roe.json/roe.yaml instead of auto-discovery
+```
+
+Declarations in generated files are never flagged, and the same `ignore`
+globs from a config file apply here too.
+
+#### What it checks, and what to do about it
+
+| Check | What it measures | Typical fix |
+| --- | --- | --- |
+| **high complexity** | Cyclomatic complexity — one point per `if`, loop, `catch`, `case`, ternary, and `&&`/`\|\|`/`??`, plus one baseline. Counts the independent paths through a method, which is roughly the number of tests needed to cover it. | Extract the branches into named methods; replace flag parameters and `switch` ladders with polymorphism or a lookup table; use guard clauses to flatten nesting. |
+| **hard to follow** | Cognitive complexity — the same control-flow structures, but each one costs more the deeper it is nested, and shapes the eye reads at a glance are forgiven: an `else if` chain stays flat, a whole `switch` costs 1 no matter how many cases it has, and a run of `&&` counts once. Estimates how hard a method is to *understand*, where cyclomatic estimates how hard it is to *test*. | Flatten first — early returns and guard clauses are worth more here than extraction, since removing one level of nesting discounts everything inside it. Then extract the deepest block into a named method, which resets its nesting to zero. |
+| **long method** | Lines spanned by a method body. | Extract Method along the seams — usually the comment-delimited "sections" of the body are the extractions waiting to happen. |
+| **too many parameters** | Parameters in a method's declaration. | Introduce a Parameter Object: bundle the arguments that always travel together into a `record`, so `Send(string to, string cc, string subject, string body, bool html, int retries)` becomes `Send(EmailMessage message)`. If several belong to the same existing object, Preserve Whole Object and pass that instead. |
+| **large file** | Total lines in a `.cs` file. | Usually a symptom rather than a cause — split the file per type, or move nested helper types into their own files. |
+| **large type** | Declared members on a type. | Extract Class: find the cluster of fields and the methods that touch only those fields, and move them out together. A type doing two jobs usually shows up as two such clusters. |
+| **circular dependency** | Types that reference each other, directly or through a longer chain. | Break the loop by depending on an abstraction: extract an interface that one side owns and the other implements (Dependency Inversion), or move the shared concept both sides need into a third type neither one owns. |
+
+Note that complexity, length, and member-count thresholds are conventions,
+not laws — the defaults sit near the values common linters use,
+`--max-complexity 10` traces back to McCabe's original 1976 paper, and the
+cognitive complexity rules follow Campbell's 2018 SonarSource formulation.
+Tune them to your codebase rather than treating the defaults as a target.
+Circular dependencies are the exception: they're reported regardless of any
+threshold, because a cycle is a structural fact rather than a judgement
+call.
+
+#### Hotspots
+
+`--hotspots` answers a different question from the checks above. Those ask
+"what is wrong here"; hotspots ask "of everything that's wrong, what should I
+fix first". It ranks files by the product of how dense their complexity is
+and how often they actually change, on the theory that complexity you never
+touch costs you nothing.
+
+```
+$ roe health path/to/solution --hotspots
+
+hotspots (complexity × churn over 1284 commit(s))
+    100  src/App/Billing/InvoiceService.cs  complexity 96 over 412 line(s), 18.4 weighted commit(s)
+     41  src/App/Orders/OrderValidator.cs   complexity 44 over 260 line(s), 9.1 weighted commit(s)
+      7  src/App/Shipping/RateTable.cs      complexity 31 over 890 line(s), 6.2 weighted commit(s)
+```
+
+The score is:
+
+```
+normalized_churn      = weighted_commits / max_weighted_commits   (0..1)
+normalized_complexity = complexity_density / max_density          (0..1)
+score                 = normalized_churn × normalized_complexity × 100
+```
+
+`weighted_commits` is a recency-weighted commit count: each commit touching
+the file is discounted on an exponential decay with a **90-day half-life**, so
+a change from today counts 1.0, one from three months ago 0.5, and one from a
+year ago about 0.06. A file rewritten fifty times three years ago and left
+alone since is settled, not volatile. `complexity_density` is cyclomatic
+complexity divided by lines, which stops long-but-simple files from crowding
+out short-but-gnarly ones.
+
+Both terms are normalized **within the run**, so the riskiest file always
+scores close to 100 and a score only means something next to the other scores
+beside it. A 100 is not a grade — it just means "start here". Files with no
+churn or no complexity score zero and are left out entirely.
+
+Three things worth knowing:
+
+- **Hotspots never affect the exit code.** Every codebase has a riskiest
+  file, so failing a build over the existence of a ranking would make the
+  check useless as a CI gate. Only the threshold checks above exit `1`.
+- **It needs real git history.** Running outside a git working tree is an
+  error rather than a silent zero. In CI, `actions/checkout` defaults to a
+  shallow clone, which truncates every score — set `fetch-depth: 0`. roe warns
+  when it detects one.
+- **Merges are traversed but not counted**, so a squashed pull request is one
+  change rather than one per branch commit.
+
+The idea is Adam Tornhill's, from *Your Code as a Crime Scene*; the scoring
+formula here matches [Fallow's](https://docs.fallow.tools/cli/health#hotspot-score-formula).
 
 ## Suppressing findings
 
