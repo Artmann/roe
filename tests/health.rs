@@ -276,6 +276,41 @@ fn exclude_tests_drops_test_project_declarations_only() {
 }
 
 #[test]
+fn exclude_tests_hides_a_cycle_inside_a_test_project() {
+    // Cycles ignore every threshold, so `--exclude-tests` is the only thing
+    // that can hide one — and it must hide only the test project's.
+    let cycle_names = |thresholds: Thresholds| {
+        let analysis =
+            analyze(&fixture("health_test_cycle"), thresholds).expect("analysis should succeed");
+        let mut names: Vec<String> = analysis
+            .result
+            .cycles
+            .iter()
+            .flat_map(|cycle| cycle.path.iter().chain(&cycle.others))
+            .map(|member| member.name.clone())
+            .collect();
+        names.sort();
+
+        names
+    };
+
+    assert_eq!(
+        cycle_names(lenient()),
+        vec![
+            "Lib.Alpha",
+            "Lib.Beta",
+            "Lib.Tests.FakeAlpha",
+            "Lib.Tests.FakeBeta"
+        ]
+    );
+
+    let mut thresholds = lenient();
+    thresholds.exclude_tests = true;
+
+    assert_eq!(cycle_names(thresholds), vec!["Lib.Alpha", "Lib.Beta"]);
+}
+
+#[test]
 fn a_scoped_marker_suppresses_only_the_rule_it_names() {
     let mut thresholds = lenient();
     thresholds.max_complexity = 3;

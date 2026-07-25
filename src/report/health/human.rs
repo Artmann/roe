@@ -249,7 +249,7 @@ fn print_hotspots(result: &HealthResult, workspace: &Workspace) {
         );
 
         println!(
-            "  {:>5}  {}  {}",
+            "  {}  {}  {}",
             score(hotspot.score),
             display,
             detail.dimmed()
@@ -259,8 +259,12 @@ fn print_hotspots(result: &HealthResult, workspace: &Workspace) {
 
 /// Red at the top of the ranking, yellow through the middle, dim once the
 /// score stops meaning much.
+///
+/// Padded here rather than at the call site: ANSI escapes count towards a
+/// format width, so aligning an already-coloured string silently under-pads
+/// it.
 fn score(value: f64) -> ColoredString {
-    let text = format!("{value:.0}");
+    let text = format!("{value:>5.0}");
 
     if value >= 60.0 {
         text.red().bold()
@@ -516,7 +520,11 @@ mod tests {
     /// `NO_COLOR`, under which every band renders identically and a test of
     /// which colour was chosen would assert nothing.
     fn forcing_color() -> impl Drop {
-        struct Guard(MutexGuard<'static, ()>);
+        // The lock is held for its lifetime alone and never read, hence the
+        // underscore — a plain field name would read as dead code.
+        struct Guard {
+            _lock: MutexGuard<'static, ()>,
+        }
 
         impl Drop for Guard {
             fn drop(&mut self) {
@@ -526,23 +534,25 @@ mod tests {
 
         // A poisoned lock means another colour test panicked; the state it
         // guards is reset below either way, so carry on rather than cascade.
-        let guard = COLOR_OVERRIDE
+        let lock = COLOR_OVERRIDE
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         colored::control::set_override(true);
 
-        Guard(guard)
+        Guard { _lock: lock }
     }
 
     #[test]
     fn hotspot_scores_are_colored_by_band() {
         let _color = forcing_color();
 
-        assert_eq!(score(72.0).to_string(), "72".red().bold().to_string());
-        assert_eq!(score(60.0).to_string(), "60".red().bold().to_string());
-        assert_eq!(score(40.0).to_string(), "40".yellow().to_string());
-        assert_eq!(score(25.0).to_string(), "25".yellow().to_string());
-        assert_eq!(score(9.0).to_string(), "9".dimmed().to_string());
+        // Padded to a common width *inside* the colouring, so the column stays
+        // aligned once the escapes are in the string.
+        assert_eq!(score(72.0).to_string(), "   72".red().bold().to_string());
+        assert_eq!(score(60.0).to_string(), "   60".red().bold().to_string());
+        assert_eq!(score(40.0).to_string(), "   40".yellow().to_string());
+        assert_eq!(score(25.0).to_string(), "   25".yellow().to_string());
+        assert_eq!(score(9.0).to_string(), "    9".dimmed().to_string());
     }
 
     #[test]

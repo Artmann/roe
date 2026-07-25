@@ -208,8 +208,10 @@ contains everything.
 
 `--exclude-tests` skips test projects entirely. Long arrange/act/assert
 methods and multi-case fixtures are normal there, and a test class is
-supposed to have one method per case. It's off by default so nothing goes
-unreported without you asking.
+supposed to have one method per case. A circular dependency that touches a
+test project is dropped whole, since a path with holes in it would name edges
+that aren't there. It's off by default so nothing goes unreported without you
+asking.
 
 Declarations in generated files are never flagged, and the same `ignore`
 globs from a config file apply here too.

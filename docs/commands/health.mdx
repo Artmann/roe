@@ -50,7 +50,7 @@ it sits. The worst offenders come first.
 | `--max-parameters <N>` | Flag methods, operators, and indexers declared with more than this many parameters. Defaults to `5`. |
 | `--max-file-lines <N>` | Flag files longer than this many lines. Defaults to `750`. |
 | `--max-type-members <N>` | Flag types with more than this many members. Defaults to `20`. |
-| `--exclude-tests` | Skip declarations in test projects. Off by default. |
+| `--exclude-tests` | Skip test projects, including any circular dependency that touches one. Off by default. |
 | `--sort <severity\|path>` | Order findings by how far past their threshold they sit, or by file path. Defaults to `severity`. |
 | `--limit <N>` | Print at most this many findings; `0` prints all of them. Defaults to `0`. |
 | `--hotspots` | Also rank files that are both complex and frequently changed, read from git history. |
