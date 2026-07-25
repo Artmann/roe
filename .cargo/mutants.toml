@@ -1,0 +1,16 @@
+# Mutants that no test can kill, with the argument for why.
+#
+# Only provably equivalent mutants belong here — ones where the mutated code
+# computes a different value but cannot produce different output. A mutant that
+# merely looks hard to reach is a missing test, not an exclusion.
+exclude_re = [
+    # `RuleFilter::targets_file_wide` decides whether a suppression marker is
+    # remembered past the line it was written on. Forcing it to `true` only
+    # ever adds filters to `file_wide` that `FileSuppressions::suppresses`
+    # then rejects: it consults `file_wide` only for a kind where
+    # `kind.is_file_wide()`, and it still requires `filter.matches(kind)`.
+    # A filter that answered `false` here is `Only(kinds)` with no file-wide
+    # kind in it, so `kinds.contains(&kind)` is false for exactly the kinds
+    # that could reach it. The guard saves work; it decides nothing.
+    "targets_file_wide -> bool with true",
+]

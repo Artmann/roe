@@ -1693,6 +1693,35 @@ class C
     }
 
     #[test]
+    fn a_goto_costs_on_top_of_what_it_jumps_on() {
+        // `goto case` takes a constant expression, and a constant expression
+        // can still hold a boolean operator the reader has to work through.
+        // The jump costs its own point on top of that.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    const bool A = true;
+    const bool B = false;
+
+    void M(bool x)
+    {
+        switch (x)
+        {
+            case true:
+                goto case A || B;
+            case false:
+                break;
+        }
+    }
+}
+"#,
+        );
+        // 1 for the `switch`, 1 for the jump, 1 for the `||` it jumps on.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cognitive, 3);
+    }
+
+    #[test]
     fn line_count_covers_the_whole_file() {
         let (facts, _) = extract("class C\n{\n}\n");
 

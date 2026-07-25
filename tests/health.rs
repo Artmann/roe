@@ -159,6 +159,32 @@ fn a_metric_that_only_reaches_its_threshold_is_not_flagged() {
 }
 
 #[test]
+fn a_declaration_without_a_body_is_never_measured() {
+    // An interface method has a parameter list but no implementation, so
+    // every metric on it would be measuring nothing. Only the class that
+    // implements it is reported — even though the two share a signature, and
+    // so a parameter count.
+    let mut thresholds = lenient();
+    thresholds.max_parameters = 0;
+
+    let names: Vec<String> = findings("console_app", thresholds)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+
+    assert!(
+        names.contains(&"ConsoleApp.ConsoleGreeter.Greet".to_string()),
+        "the implementation is measured, got {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|name| name.starts_with("ConsoleApp.IGreeter")),
+        "the interface declaration is not, got {names:?}"
+    );
+}
+
+#[test]
 fn overloads_are_told_apart_by_arity_and_nothing_else_is() {
     // Every member trips the complexity check, so the whole file is named.
     let mut thresholds = lenient();
@@ -272,6 +298,21 @@ fn exclude_tests_drops_test_project_declarations_only() {
                 "Lib.UnusedInternal".to_string(),
             ),
         ],
+    );
+}
+
+#[test]
+fn a_partial_type_with_a_generated_half_is_never_flagged() {
+    // Partial declarations merge into one symbol and their flags merge with
+    // them, so a designer file marks the whole type as generated. That is the
+    // point: the member count is a property of the type, and roe cannot tell
+    // which half of it a maintainer is free to change.
+    let mut thresholds = lenient();
+    thresholds.max_type_members = 2;
+
+    assert_findings(
+        findings("health_partial_generated", thresholds),
+        vec![(HealthFindingKind::LargeType, "Lib.Plain".to_string())],
     );
 }
 
