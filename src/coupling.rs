@@ -59,10 +59,15 @@ pub fn fan_out(
     result
 }
 
+/// One node of the explicit Tarjan stack, part-way through its neighbors.
+///
+/// The neighbors are held as an iterator rather than a slice and a cursor:
+/// each one is visited exactly once, and draining them is the only thing that
+/// guarantees the traversal terminates. A hand-rolled index could fail to
+/// advance; this cannot.
 struct Frame {
     node: SymbolId,
-    neighbors: Vec<SymbolId>,
-    next: usize,
+    neighbors: std::vec::IntoIter<SymbolId>,
 }
 
 /// One circular dependency: a real cycle, plus whatever else is tangled with
@@ -207,8 +212,7 @@ fn components(fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>) -> Vec<Vec<Sym
 
         let mut work: Vec<Frame> = vec![Frame {
             node: start,
-            neighbors: neighbors_of(start),
-            next: 0,
+            neighbors: neighbors_of(start).into_iter(),
         }];
         indices.insert(start, next_index);
         lowlink.insert(start, next_index);
@@ -217,16 +221,7 @@ fn components(fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>) -> Vec<Vec<Sym
         on_stack.insert(start);
 
         while let Some(top) = work.len().checked_sub(1) {
-            let next_neighbor = {
-                let frame = &mut work[top];
-                if frame.next < frame.neighbors.len() {
-                    let neighbor = frame.neighbors[frame.next];
-                    frame.next += 1;
-                    Some(neighbor)
-                } else {
-                    None
-                }
-            };
+            let next_neighbor = work[top].neighbors.next();
 
             match next_neighbor {
                 Some(neighbor) => {
@@ -240,8 +235,7 @@ fn components(fan_out: &FxHashMap<SymbolId, FxHashSet<SymbolId>>) -> Vec<Vec<Sym
                             on_stack.insert(neighbor);
                             work.push(Frame {
                                 node: neighbor,
-                                neighbors: neighbors_of(neighbor),
-                                next: 0,
+                                neighbors: neighbors_of(neighbor).into_iter(),
                             });
                         }
                         Entry::Occupied(entry) => {
