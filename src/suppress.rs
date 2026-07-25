@@ -339,4 +339,118 @@ mod tests {
         );
         assert!(suppressions.suppresses(1, FindingKind::UnusedFile));
     }
+
+    #[test]
+    fn a_line_scoped_marker_is_not_remembered_file_wide() {
+        // Only markers that could suppress a file-wide kind outlive their own
+        // line. An `unused-member` marker on line 3 must not reach the
+        // dead-file finding pinned at line 1.
+        let mut warnings = Vec::new();
+        let suppressions = parse_suppressions(
+            "using System;\n\n// roe-ignore-line unused-member\nclass Dead {}\n",
+            Path::new("x.cs"),
+            &mut warnings,
+        );
+
+        assert!(suppressions.suppresses(3, FindingKind::UnusedMember));
+        assert!(!suppressions.suppresses(1, FindingKind::UnusedFile));
+    }
+
+    #[test]
+    fn every_health_rule_name_maps_to_its_own_kind() {
+        // One marker per rule, each asserted to suppress its kind and leave a
+        // neighbouring kind alone — a dropped match arm fails the first half,
+        // an over-broad one fails the second.
+        for (rule, kind, other) in [
+            (
+                "high-complexity",
+                HealthFindingKind::HighComplexity,
+                HealthFindingKind::LongMethod,
+            ),
+            (
+                "high-cognitive-complexity",
+                HealthFindingKind::HighCognitiveComplexity,
+                HealthFindingKind::HighComplexity,
+            ),
+            (
+                "long-method",
+                HealthFindingKind::LongMethod,
+                HealthFindingKind::HighComplexity,
+            ),
+            (
+                "too-many-parameters",
+                HealthFindingKind::TooManyParameters,
+                HealthFindingKind::LongMethod,
+            ),
+            (
+                "large-file",
+                HealthFindingKind::LargeFile,
+                HealthFindingKind::LargeType,
+            ),
+            (
+                "large-type",
+                HealthFindingKind::LargeType,
+                HealthFindingKind::LargeFile,
+            ),
+        ] {
+            let mut warnings = Vec::new();
+            let suppressions: FileSuppressions<HealthFindingKind> = parse_suppressions(
+                &format!("// roe-ignore-next-line {rule}\nvoid Foo() {{}}\n"),
+                Path::new("x.cs"),
+                &mut warnings,
+            );
+
+            assert!(
+                suppressions.suppresses(2, kind),
+                "'{rule}' should suppress {kind:?}"
+            );
+            assert!(
+                !suppressions.suppresses(2, other),
+                "'{rule}' should not suppress {other:?}"
+            );
+            assert!(warnings.is_empty(), "'{rule}' should be a known rule");
+        }
+    }
+
+    #[test]
+    fn the_unknown_rule_warning_lists_the_rules_that_would_have_worked() {
+        // A warning that names the bad token but not the alternatives leaves
+        // the user guessing, so the accepted names are part of the contract.
+        let mut warnings = Vec::new();
+        let _: FileSuppressions<FindingKind> = parse_suppressions(
+            "// roe-ignore-next-line unused-mmeber\nvoid Foo() {}\n",
+            Path::new("x.cs"),
+            &mut warnings,
+        );
+        assert_eq!(warnings.len(), 1);
+        for name in ["unused-type", "unused-member", "unused-file"] {
+            assert!(
+                warnings[0].contains(name),
+                "dead-code warning should offer '{name}', got: {}",
+                warnings[0]
+            );
+        }
+
+        let mut warnings = Vec::new();
+        let _: FileSuppressions<HealthFindingKind> = parse_suppressions(
+            "// roe-ignore-next-line lon-method\nvoid Foo() {}\n",
+            Path::new("x.cs"),
+            &mut warnings,
+        );
+        assert_eq!(warnings.len(), 1);
+        for name in [
+            "high-complexity",
+            "high-cognitive-complexity",
+            "long-method",
+            "too-many-parameters",
+            "large-file",
+            "large-type",
+        ] {
+            assert!(
+                warnings[0].contains(name),
+                "health warning should offer '{name}', got: {}",
+                warnings[0]
+            );
+        }
+    }
 }

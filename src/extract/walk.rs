@@ -1606,6 +1606,100 @@ class C
     }
 
     #[test]
+    fn a_condition_costs_on_top_of_the_branch_that_tests_it() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(bool a, bool b)
+    {
+        if (a && b) { DoA(); }
+    }
+}
+"#,
+        );
+        // 1 for the `if`, 1 for the `&&` run inside its condition.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cognitive, 2);
+    }
+
+    #[test]
+    fn both_kinds_of_else_nest_their_bodies_but_cost_a_flat_one() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(bool a, bool b, bool c, bool d)
+    {
+        if (a) { DoA(); }
+        else if (b) { if (c) { DoB(); } }
+        else { if (d) { DoC(); } }
+    }
+}
+"#,
+        );
+        // The `if` costs 1. The `else if` costs a flat 1 plus the nested `if`
+        // in its body at depth 1, so 3; the trailing `else` the same.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cognitive, 7);
+    }
+
+    #[test]
+    fn a_loop_inside_a_branch_costs_more_than_one_at_the_top() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void Top(int[] xs)
+    {
+        foreach (var x in xs) { DoA(); }
+        foreach (var x in xs) { DoB(); }
+    }
+
+    void Buried(int[] xs)
+    {
+        foreach (var x in xs)
+        {
+            foreach (var y in xs) { DoA(); }
+        }
+    }
+}
+"#,
+        );
+        // Two loops at depth 0 cost 1 each...
+        assert_eq!(decl_named(&facts, &rodeo, "Top").cognitive, 2);
+        // ...where the same two loops nested cost 1 + 2, because the inner one
+        // is charged for the depth it sits at.
+        assert_eq!(decl_named(&facts, &rodeo, "Buried").cognitive, 3);
+    }
+
+    #[test]
+    fn goto_costs_one_wherever_it_sits() {
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(bool a)
+    {
+        if (a) { goto done; }
+        DoA();
+        done:
+        DoB();
+    }
+}
+"#,
+        );
+        // 1 for the `if`, 1 for the jump. A `goto` breaks the reader's flow
+        // but does not deepen it, so its depth does not matter.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cognitive, 2);
+    }
+
+    #[test]
+    fn line_count_covers_the_whole_file() {
+        let (facts, _) = extract("class C\n{\n}\n");
+
+        assert_eq!(facts.line_count, 4);
+    }
+
+    #[test]
     fn switch_costs_one_regardless_of_case_count() {
         let (facts, rodeo) = extract(
             r#"

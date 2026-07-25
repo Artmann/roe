@@ -114,8 +114,7 @@ pub fn analyze(root: &Path) -> anyhow::Result<Churn> {
             .time()
             .context("failed to read a commit timestamp")?
             .seconds;
-        let age_days = ((now - seconds).max(0) as f64) / SECONDS_PER_DAY;
-        let weight = 0.5_f64.powf(age_days / HALF_LIFE_DAYS);
+        let weight = decay(age_in_days(now, seconds));
 
         for path in changed_paths(&repository, &commit)? {
             *churn
@@ -126,6 +125,21 @@ pub fn analyze(root: &Path) -> anyhow::Result<Churn> {
     }
 
     Ok(churn)
+}
+
+/// How old a commit is, in fractional days.
+///
+/// Clamped at zero: imported and rebased history routinely carries timestamps
+/// slightly in the future, and a negative age would weight such a commit at
+/// more than a fresh one.
+fn age_in_days(now_seconds: i64, commit_seconds: i64) -> f64 {
+    ((now_seconds - commit_seconds).max(0) as f64) / SECONDS_PER_DAY
+}
+
+/// What a commit of a given age contributes to a file's churn: 1.0 today,
+/// halving every [`HALF_LIFE_DAYS`].
+fn decay(age_days: f64) -> f64 {
+    0.5_f64.powf(age_days / HALF_LIFE_DAYS)
 }
 
 /// Repository-relative paths touched by `commit` relative to its first parent.
@@ -180,18 +194,45 @@ fn changed_paths(
 mod tests {
     use super::*;
 
+    /// A day in seconds, so the age cases below read as calendar time.
+    const DAY: i64 = 86_400;
+
     #[test]
     fn a_commit_from_today_counts_about_once() {
-        let weight = 0.5_f64.powf(0.0 / HALF_LIFE_DAYS);
-
-        assert!((weight - 1.0).abs() < 1e-9);
+        assert!((decay(0.0) - 1.0).abs() < 1e-9);
     }
 
     #[test]
     fn a_commit_one_half_life_old_counts_half() {
-        let weight = 0.5_f64.powf(HALF_LIFE_DAYS / HALF_LIFE_DAYS);
+        assert!((decay(HALF_LIFE_DAYS) - 0.5).abs() < 1e-9);
+        assert!((decay(2.0 * HALF_LIFE_DAYS) - 0.25).abs() < 1e-9);
+    }
 
-        assert!((weight - 0.5).abs() < 1e-9);
+    #[test]
+    fn a_commit_a_year_old_barely_counts() {
+        // The docs promise "about 0.06" at a year, which is the whole reason
+        // churn is weighted rather than counted.
+        let weight = decay(365.0);
+
+        assert!(weight > 0.05 && weight < 0.07, "got {weight}");
+    }
+
+    #[test]
+    fn age_is_the_elapsed_time_in_days() {
+        let now = 1_000 * DAY;
+
+        assert!((age_in_days(now, now) - 0.0).abs() < 1e-9);
+        assert!((age_in_days(now, now - DAY) - 1.0).abs() < 1e-9);
+        assert!((age_in_days(now, now - 45 * DAY) - 45.0).abs() < 1e-9);
+        // Fractions matter: half a day is half a day, not a whole one.
+        assert!((age_in_days(now, now - DAY / 2) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_commit_timestamped_in_the_future_is_treated_as_brand_new() {
+        let now = 1_000 * DAY;
+
+        assert_eq!(age_in_days(now, now + 30 * DAY), 0.0);
     }
 
     #[test]

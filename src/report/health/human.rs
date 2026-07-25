@@ -407,3 +407,152 @@ fn pluralize_dependencies(count: usize) -> String {
         }
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard};
+
+    use super::*;
+
+    /// A finding with just the fields the presentation layer reads.
+    fn finding(
+        file: &str,
+        line: u32,
+        column: u32,
+        name: &str,
+        metric: u32,
+        threshold: u32,
+    ) -> HealthFinding {
+        HealthFinding {
+            kind: HealthFindingKind::HighComplexity,
+            name: name.to_string(),
+            project: None,
+            file: PathBuf::from(file),
+            line,
+            column,
+            metric,
+            threshold,
+            breakdown: None,
+        }
+    }
+
+    /// One printed group: its position, the declaration it names, and how many
+    /// checks were folded into it.
+    type GroupShape<'a> = (u32, u32, &'a str, usize);
+
+    /// The groups of every file, in printed order.
+    fn shape<'a>(files: &'a [FileGroup<'a>]) -> Vec<(&'a str, Vec<GroupShape<'a>>)> {
+        files
+            .iter()
+            .map(|file| {
+                let groups = file
+                    .groups
+                    .iter()
+                    .map(|group| (group.line, group.column, group.name, group.findings.len()))
+                    .collect();
+
+                (file.file.to_str().unwrap_or_default(), groups)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_findings_on_the_very_same_declaration_are_folded_together() {
+        // Sorted the way `collect_findings` hands them over: by file, then
+        // line, then column.
+        let findings = vec![
+            finding("a.cs", 5, 9, "App.A.Small", 11, 10),
+            finding("a.cs", 5, 17, "App.A.Branchy", 30, 10),
+            finding("a.cs", 5, 17, "App.A.Branchy", 12, 10),
+            finding("a.cs", 9, 17, "App.A.Branchy", 11, 10),
+        ];
+
+        assert_eq!(
+            shape(&group(&findings)),
+            vec![(
+                "a.cs",
+                vec![
+                    (5, 9, "App.A.Small", 1),
+                    // Same line *and* column *and* name — one declaration.
+                    (5, 17, "App.A.Branchy", 2),
+                    // A different line is a different declaration, even where
+                    // the column and the name repeat.
+                    (9, 17, "App.A.Branchy", 1),
+                ]
+            )]
+        );
+    }
+
+    #[test]
+    fn a_file_is_ranked_by_its_worst_finding_not_by_its_path() {
+        // `a.cs` sorts first alphabetically but is nowhere near as bad.
+        let findings = vec![
+            finding("a.cs", 1, 1, "App.A.Mild", 15, 10),
+            finding("b.cs", 1, 1, "App.B.Awful", 60, 10),
+            finding("b.cs", 2, 1, "App.B.Mild", 11, 10),
+        ];
+
+        let mut files = group(&findings);
+        sort_by_severity(&mut files);
+
+        assert_eq!(
+            shape(&files),
+            vec![
+                (
+                    "b.cs",
+                    vec![(1, 1, "App.B.Awful", 1), (2, 1, "App.B.Mild", 1)]
+                ),
+                ("a.cs", vec![(1, 1, "App.A.Mild", 1)]),
+            ]
+        );
+    }
+
+    /// Whether `colored` emits escapes at all is process-wide state, so the
+    /// tests that force it on have to take turns.
+    static COLOR_OVERRIDE: Mutex<()> = Mutex::new(());
+
+    /// Turn colour on for the duration of a test. The harness runs with
+    /// `NO_COLOR`, under which every band renders identically and a test of
+    /// which colour was chosen would assert nothing.
+    fn forcing_color() -> impl Drop {
+        struct Guard(MutexGuard<'static, ()>);
+
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                colored::control::unset_override();
+            }
+        }
+
+        // A poisoned lock means another colour test panicked; the state it
+        // guards is reset below either way, so carry on rather than cascade.
+        let guard = COLOR_OVERRIDE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        colored::control::set_override(true);
+
+        Guard(guard)
+    }
+
+    #[test]
+    fn hotspot_scores_are_colored_by_band() {
+        let _color = forcing_color();
+
+        assert_eq!(score(72.0).to_string(), "72".red().bold().to_string());
+        assert_eq!(score(60.0).to_string(), "60".red().bold().to_string());
+        assert_eq!(score(40.0).to_string(), "40".yellow().to_string());
+        assert_eq!(score(25.0).to_string(), "25".yellow().to_string());
+        assert_eq!(score(9.0).to_string(), "9".dimmed().to_string());
+    }
+
+    #[test]
+    fn a_finding_at_twice_its_threshold_is_reddened() {
+        let _color = forcing_color();
+
+        let bad = describe(&finding("a.cs", 1, 1, "App.A.Awful", 20, 10));
+        let mild = describe(&finding("a.cs", 1, 1, "App.A.Mild", 19, 10));
+
+        assert_eq!(bad, "cyclomatic 20/10".red().bold().to_string());
+        assert_eq!(mild, "cyclomatic 19/10".yellow().to_string());
+    }
+}
