@@ -469,6 +469,116 @@ fn health_json_output_is_stable() {
 }
 
 #[test]
+fn health_reports_a_cycle_on_its_own() {
+    // Nothing here trips a threshold, so the circular dependency is the only
+    // thing left — and it alone has to fail the build and lead the report.
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_metrics"),
+            // ManyParams sits one over the default parameter limit, and this
+            // test is about what happens when a cycle is *all* there is.
+            "--max-parameters",
+            "6",
+        ])
+        .output()
+        .expect("command runs");
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    assert!(
+        !stdout.contains("no health issues found"),
+        "a cycle is an issue, got:\n{stdout}"
+    );
+    assert!(
+        stdout.starts_with("circular dependencies"),
+        "with nothing printed above it, the section leads the report, got:\n{stdout}"
+    );
+    assert!(stdout.contains("found 1 issue across 0 locations in 0 files"));
+}
+
+#[test]
+fn health_separates_files_with_a_blank_line_and_counts_every_kind() {
+    // Two files, each with findings, and both a long method and large files in
+    // the totals — the summed headline is otherwise indistinguishable from one
+    // that drops the kinds that happen to be zero.
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_metrics"),
+            "--max-complexity",
+            "3",
+            "--max-file-lines",
+            "10",
+            "--max-method-lines",
+            "5",
+            "--max-parameters",
+            "6",
+        ])
+        .output()
+        .expect("command runs");
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    assert!(
+        stdout.starts_with("HealthMetrics/Widget.cs"),
+        "the worst file leads, with no blank line above it, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\n\nHealthMetrics/Cycle.cs"),
+        "a blank line separates the next file, got:\n{stdout}"
+    );
+    // 1 complex method + 1 long method + 2 large files + 1 cycle.
+    assert!(
+        stdout.contains("found 5 issues across 3 locations in 2 files"),
+        "every kind counts towards the headline, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn health_ignore_globs_drop_findings_and_the_cycles_they_touch() {
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_config_ignore"),
+            "--format",
+            "json",
+            "--max-complexity",
+            "2",
+        ])
+        .output()
+        .expect("command runs");
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    let names: Vec<&str> = parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .filter_map(|finding| finding["name"].as_str())
+        .collect();
+    assert_eq!(names, vec!["Lib.KeptWidget.Branchy"], "got {stdout}");
+
+    // A cycle is dropped only when the ignore glob covers it — the one in
+    // Kept.cs has to survive the one in Ignored.cs being removed.
+    let cycles = parsed["cycles"].as_array().expect("cycles array");
+    let members: Vec<&str> = cycles
+        .iter()
+        .flat_map(|cycle| cycle["path"].as_array().expect("path array"))
+        .filter_map(|member| member["name"].as_str())
+        .collect();
+    assert_eq!(cycles.len(), 1, "got {stdout}");
+    assert_eq!(
+        members,
+        vec!["Lib.KeptAlpha", "Lib.KeptBeta"],
+        "got {stdout}"
+    );
+}
+
+#[test]
 fn health_invalid_path_exits_2() {
     let output = roe()
         .args(["health", "/definitely/not/a/real/path"])

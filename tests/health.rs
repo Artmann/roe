@@ -125,6 +125,75 @@ fn large_file_flags_files_over_the_line_limit() {
 }
 
 #[test]
+fn a_metric_that_only_reaches_its_threshold_is_not_flagged() {
+    // Every limit set to exactly what the fixture's worst declaration
+    // measures: Branchy is cyclomatic 4, cognitive 3 and 10 lines long,
+    // ManyParams takes 6 arguments, Widget has 4 members, and Widget.cs is 25
+    // lines. A threshold is the most a declaration may be, not the least it
+    // may not — so all of this is fine, and one-past-any of it is not.
+    let at_the_limit = Thresholds {
+        max_cognitive: 3,
+        max_complexity: 4,
+        max_method_lines: 10,
+        max_parameters: 6,
+        max_file_lines: 25,
+        max_type_members: 4,
+        exclude_tests: false,
+    };
+
+    assert_findings(findings("health_metrics", at_the_limit), vec![]);
+
+    let one_under = |mutate: fn(&mut Thresholds)| {
+        let mut thresholds = at_the_limit;
+        mutate(&mut thresholds);
+
+        findings("health_metrics", thresholds).len()
+    };
+
+    assert_eq!(one_under(|t| t.max_cognitive -= 1), 1, "cognitive");
+    assert_eq!(one_under(|t| t.max_complexity -= 1), 1, "complexity");
+    assert_eq!(one_under(|t| t.max_method_lines -= 1), 1, "method lines");
+    assert_eq!(one_under(|t| t.max_parameters -= 1), 1, "parameters");
+    assert_eq!(one_under(|t| t.max_file_lines -= 1), 1, "file lines");
+    assert_eq!(one_under(|t| t.max_type_members -= 1), 1, "type members");
+}
+
+#[test]
+fn overloads_are_told_apart_by_arity_and_nothing_else_is() {
+    // Every member trips the complexity check, so the whole file is named.
+    let mut thresholds = lenient();
+    thresholds.max_complexity = 0;
+
+    assert_findings(
+        findings("health_overloads", thresholds),
+        vec![
+            (
+                HealthFindingKind::HighComplexity,
+                "Overloads.Mailer.Close".to_string(),
+            ),
+            // The static and the instance constructor share a name without
+            // being overloads of each other, so neither is suffixed.
+            (
+                HealthFindingKind::HighComplexity,
+                "Overloads.Mailer.Mailer".to_string(),
+            ),
+            (
+                HealthFindingKind::HighComplexity,
+                "Overloads.Mailer.Mailer".to_string(),
+            ),
+            (
+                HealthFindingKind::HighComplexity,
+                "Overloads.Mailer.Send/1".to_string(),
+            ),
+            (
+                HealthFindingKind::HighComplexity,
+                "Overloads.Mailer.Send/2".to_string(),
+            ),
+        ],
+    );
+}
+
+#[test]
 fn alpha_and_beta_form_a_circular_dependency() {
     // Cycles are reported regardless of thresholds — there is no knob that
     // turns them off, and lenient size limits must not hide them.
@@ -172,7 +241,10 @@ fn generated_file_is_never_flagged() {
 
 #[test]
 fn exclude_tests_drops_test_project_declarations_only() {
+    // Tight enough to catch the test project's one method as well as its one
+    // class, so both the member-level and the type-level checks are covered.
     let mut thresholds = lenient();
+    thresholds.max_method_lines = 3;
     thresholds.max_type_members = 0;
 
     let included = findings("with_tests", thresholds);
@@ -181,6 +253,12 @@ fn exclude_tests_drops_test_project_declarations_only() {
             .iter()
             .any(|(_, name)| name == "Lib.Tests.CalculatorTests"),
         "the test class is flagged by default, got {included:?}"
+    );
+    assert!(
+        included
+            .iter()
+            .any(|(_, name)| name == "Lib.Tests.CalculatorTests.Adds"),
+        "and so is the test method, got {included:?}"
     );
 
     thresholds.exclude_tests = true;

@@ -217,6 +217,29 @@ mod tests {
     }
 
     #[test]
+    fn each_kind_lands_in_its_own_bucket_and_total_sums_all_four() {
+        // Distinct counts per bucket, so a total that dropped or duplicated
+        // one of them can't coincidentally still come out right.
+        let mut breakdown = MemberBreakdown::default();
+        for (kind, times) in [
+            (MemberKind::Method, 4),
+            (MemberKind::Property, 3),
+            (MemberKind::Field, 2),
+            (MemberKind::Event, 1),
+        ] {
+            for _ in 0..times {
+                assert!(breakdown.record(kind));
+            }
+        }
+
+        assert_eq!(breakdown.methods, 4);
+        assert_eq!(breakdown.properties, 3);
+        assert_eq!(breakdown.fields, 2);
+        assert_eq!(breakdown.events, 1);
+        assert_eq!(breakdown.total(), 10);
+    }
+
+    #[test]
     fn describe_leads_with_the_dominant_kind_and_skips_empty_ones() {
         let breakdown = MemberBreakdown {
             methods: 8,

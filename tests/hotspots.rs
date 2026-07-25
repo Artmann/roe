@@ -182,6 +182,57 @@ fn an_ignored_file_is_dropped_before_the_ranking_is_normalized() {
 }
 
 #[test]
+fn test_projects_are_ranked_unless_they_are_excluded() {
+    // A churning test suite is a real signal by default — it is code someone
+    // has to keep working on. `--exclude-tests` is the opt-out, and nothing
+    // else may drop test files from the ranking.
+    let repository = Repository::new("exclude-tests");
+
+    repository.write(
+        "App.Tests/App.Tests.csproj",
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup>\
+         <TargetFramework>net8.0</TargetFramework>\
+         </PropertyGroup><ItemGroup>\
+         <PackageReference Include=\"xunit\" Version=\"2.9.0\" />\
+         </ItemGroup></Project>\n",
+    );
+    repository.write("App/Hot.cs", &dense_class("Hot", 12));
+    repository.write("App.Tests/HotTests.cs", &dense_class("HotTests", 20));
+    repository.commit("initial");
+
+    for revision in 1..4 {
+        repository.write("App/Hot.cs", &dense_class("Hot", 12 + revision));
+        repository.write(
+            "App.Tests/HotTests.cs",
+            &dense_class("HotTests", 20 + revision),
+        );
+        repository.commit("touch both");
+    }
+
+    let included = health_json(repository.path(), &["--hotspots"]);
+    let ranked = included["hotspots"].as_array().expect("hotspots array");
+    assert!(
+        ranked
+            .iter()
+            .any(|hotspot| hotspot["file"] == "App.Tests/HotTests.cs"),
+        "test files are ranked by default, got {included}"
+    );
+
+    let excluded = health_json(repository.path(), &["--hotspots", "--exclude-tests"]);
+    let ranked = excluded["hotspots"].as_array().expect("hotspots array");
+    assert!(
+        ranked
+            .iter()
+            .all(|hotspot| hotspot["file"] != "App.Tests/HotTests.cs"),
+        "--exclude-tests must drop them, got {excluded}"
+    );
+    assert!(
+        ranked.iter().any(|hotspot| hotspot["file"] == "App/Hot.cs"),
+        "and must keep everything else, got {excluded}"
+    );
+}
+
+#[test]
 fn hotspots_never_change_the_exit_code() {
     // Every codebase has a riskiest file. Failing a build over the existence
     // of a ranking would make the check useless as a CI gate.
