@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/Artmann/roe/compare/roe-v1.1.0...roe-v1.2.0) (2026-07-25)
+
+
+### Features
+
+* **health:** Add health command for complexity, size, coupling, and hotspots ([293ec96](https://github.com/Artmann/roe/commit/293ec96a6d8c7eac5a40240527690312ae328deb))
+* **health:** Prioritize findings, honor suppressions, and read config ([f130555](https://github.com/Artmann/roe/commit/f130555c8aac6c76fb79d5fbb322c0d4c63e2e91))
+
+
+### Bug Fixes
+
+* **health:** Address PR review feedback ([5c22ecb](https://github.com/Artmann/roe/commit/5c22ecb9e22354013c6e320b33bf80019d6e56cd))
+
 ## [1.1.0](https://github.com/Artmann/roe/compare/roe-v1.0.2...roe-v1.1.0) (2026-07-23)
 
 
