@@ -64,8 +64,9 @@ pub struct HealthArgs {
     // The threshold options are Option<u32> rather than clap defaults on
     // purpose: with `default_value_t` there is no way to tell "the user asked
     // for 10" from "nobody said anything", so a `health` block in roe.json
-    // could never take effect. Defaults live in `health::Thresholds::DEFAULT`
-    // and are spelled out in the help text instead.
+    // could never take effect. The defaults live in
+    // `impl Default for config::EffectiveHealth` and are spelled out in the
+    // help text below instead.
     /// Flag methods/properties above this cyclomatic complexity [default: 10]
     #[arg(long)]
     pub max_complexity: Option<u32>,

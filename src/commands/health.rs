@@ -368,18 +368,26 @@ fn collect_findings(
             .then(a.column.cmp(&b.column))
     });
 
-    let is_generated = |&id: &SymbolId| {
-        resolution.symbols[id.index()]
-            .flags
-            .contains(SymbolFlags::GENERATED)
+    let is_hidden = |&id: &SymbolId| {
+        let symbol = &resolution.symbols[id.index()];
+
+        if symbol.flags.contains(SymbolFlags::GENERATED) {
+            return true;
+        }
+
+        let file = &workspace.files[symbol.file.index()];
+
+        thresholds.exclude_tests && in_test_project(workspace, file.project)
     };
 
-    // A cycle that touches generated code anywhere — on the printed path or
-    // merely tangled alongside it — is the generator's problem, so the whole
-    // component is dropped rather than partially reported.
+    // A cycle that touches hidden code anywhere — on the printed path or
+    // merely tangled alongside it — is dropped whole rather than partially
+    // reported, since a path with holes in it names edges that aren't there.
+    // Generated tangles are the generator's problem, and `--exclude-tests`
+    // means the user asked not to hear about test projects at all.
     let cycles = coupling::find_cycles(&fan_out)
         .into_iter()
-        .filter(|cycle| !cycle.path.iter().chain(&cycle.others).any(is_generated))
+        .filter(|cycle| !cycle.path.iter().chain(&cycle.others).any(is_hidden))
         .map(|cycle| CircularDependency {
             path: cycle
                 .path
