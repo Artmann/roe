@@ -2,11 +2,10 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
-
 use crate::cli::{DupeMode, DupesArgs};
+use crate::commands::Context;
 use crate::model::{DupesResult, DupesSummary, Workspace};
-use crate::{clone_extraction, config, discover, report, tokenize};
+use crate::{clone_extraction, commands, config, discover, report, tokenize};
 
 pub struct Analysis {
     pub workspace: Workspace,
@@ -82,47 +81,28 @@ fn build_result(
     DupesResult { groups, summary }
 }
 
-pub fn run(args: &DupesArgs) -> anyhow::Result<ExitCode> {
-    let root = match &args.path {
-        Some(path) => path.clone(),
-        None => std::env::current_dir()?,
-    };
-
-    let mut config_warnings = Vec::new();
-    let resolved_config = match &args.config {
-        Some(path) => Some(config::load_explicit(path)?),
-        None => {
-            let canonical_root = crate::paths::canonicalize(&root)
-                .with_context(|| format!("path not found: {}", root.display()))?;
-            let config_start = if canonical_root.is_dir() {
-                canonical_root
-            } else {
-                canonical_root
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or(canonical_root)
-            };
-            config::discover(&config_start, &mut config_warnings)?
-        }
-    };
-
-    let ignore = resolved_config.as_ref().and_then(|resolved| {
-        resolved
-            .config
-            .ignore
-            .as_ref()
-            .map(|patterns| (patterns.as_slice(), resolved.dir.as_path()))
-    });
-
+/// The analysis half of `run`. Prints nothing and decides no exit code, so
+/// `check` can run it alongside the other two analyses.
+pub(crate) fn execute(context: &Context, args: &DupesArgs) -> anyhow::Result<Analysis> {
     let mut analysis = analyze_with_ignores(
-        &root,
+        &context.root,
         args.mode,
         args.min_tokens,
         args.min_lines,
         args.min_occurrences,
-        ignore,
+        context.ignore(),
     )?;
-    analysis.workspace.warnings.append(&mut config_warnings);
+    analysis
+        .workspace
+        .warnings
+        .extend(context.warnings.iter().cloned());
+
+    Ok(analysis)
+}
+
+pub fn run(args: &DupesArgs) -> anyhow::Result<ExitCode> {
+    let context = commands::resolve(&args.path, &args.config)?;
+    let analysis = execute(&context, args)?;
 
     for warning in &analysis.workspace.warnings {
         eprintln!("warning: {warning}");

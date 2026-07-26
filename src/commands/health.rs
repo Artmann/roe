@@ -2,12 +2,12 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
 use globset::GlobSet;
 use lasso::ThreadedRodeo;
 use rustc_hash::FxHashMap;
 
 use crate::cli::HealthArgs;
+use crate::commands::Context;
 use crate::config::EffectiveHealth;
 use crate::model::{
     CircularDependency, CycleMember, HealthFinding, HealthFindingKind, HealthResult, HealthSummary,
@@ -15,7 +15,7 @@ use crate::model::{
 };
 use crate::resolve::{Resolution, SymbolFlags};
 use crate::{
-    churn, config, coupling, discover, extract, graph, hotspot, report, resolve, suppress,
+    churn, commands, config, coupling, discover, extract, graph, hotspot, report, resolve, suppress,
 };
 
 pub struct Analysis {
@@ -524,40 +524,13 @@ fn summarize(
     }
 }
 
-pub fn run(args: &HealthArgs) -> anyhow::Result<ExitCode> {
-    let root = match &args.path {
-        Some(path) => path.clone(),
-        None => std::env::current_dir()?,
-    };
-
-    let mut config_warnings = Vec::new();
-    let resolved_config = match &args.config {
-        Some(path) => Some(config::load_explicit(path)?),
-        None => {
-            let canonical_root = crate::paths::canonicalize(&root)
-                .with_context(|| format!("path not found: {}", root.display()))?;
-            let config_start = if canonical_root.is_dir() {
-                canonical_root
-            } else {
-                canonical_root
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or(canonical_root)
-            };
-            config::discover(&config_start, &mut config_warnings)?
-        }
-    };
-
-    let ignore = resolved_config.as_ref().and_then(|resolved| {
-        resolved
-            .config
-            .ignore
-            .as_ref()
-            .map(|patterns| (patterns.as_slice(), resolved.dir.as_path()))
-    });
-
+/// The analysis half of `run`: merge the config's `health` block with the
+/// command line, then analyze. Prints nothing and decides no exit code, so
+/// `check` can run it alongside the other two analyses.
+pub(crate) fn execute(context: &Context, args: &HealthArgs) -> anyhow::Result<Analysis> {
     let effective = config::merge_health(
-        resolved_config
+        context
+            .config
             .as_ref()
             .and_then(|resolved| resolved.config.health.as_ref()),
         config::HealthOverrides {
@@ -572,8 +545,18 @@ pub fn run(args: &HealthArgs) -> anyhow::Result<ExitCode> {
     );
 
     let hotspots = args.hotspots.then_some(args.top);
-    let mut analysis = analyze_inner(&root, effective.into(), hotspots, ignore)?;
-    analysis.workspace.warnings.append(&mut config_warnings);
+    let mut analysis = analyze_inner(&context.root, effective.into(), hotspots, context.ignore())?;
+    analysis
+        .workspace
+        .warnings
+        .extend(context.warnings.iter().cloned());
+
+    Ok(analysis)
+}
+
+pub fn run(args: &HealthArgs) -> anyhow::Result<ExitCode> {
+    let context = commands::resolve(&args.path, &args.config)?;
+    let analysis = execute(&context, args)?;
 
     for warning in &analysis.workspace.warnings {
         eprintln!("warning: {warning}");

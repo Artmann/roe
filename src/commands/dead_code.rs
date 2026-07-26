@@ -2,14 +2,15 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use anyhow::Context;
 use lasso::ThreadedRodeo;
 
 use crate::cli::DeadCodeArgs;
+use crate::commands::Context;
 use crate::model::{AnalysisResult, SymbolId, Workspace};
 use crate::resolve::SymbolFlags;
 use crate::{
-    analyze, config, discover, entry_points, extract, graph, report, resolve, rules, suppress,
+    analyze, commands, config, discover, entry_points, extract, graph, report, resolve, rules,
+    suppress,
 };
 
 pub struct Analysis {
@@ -68,46 +69,32 @@ pub fn analyze(
     Ok(Analysis { workspace, result })
 }
 
-pub fn run(args: &DeadCodeArgs) -> anyhow::Result<ExitCode> {
-    let root = match &args.path {
-        Some(path) => path.clone(),
-        None => std::env::current_dir()?,
-    };
-
-    let mut config_warnings = Vec::new();
-    let resolved_config = match &args.config {
-        Some(path) => Some(config::load_explicit(path)?),
-        None => {
-            let canonical_root = crate::paths::canonicalize(&root)
-                .with_context(|| format!("path not found: {}", root.display()))?;
-            let config_start = if canonical_root.is_dir() {
-                canonical_root
-            } else {
-                canonical_root
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or(canonical_root)
-            };
-            config::discover(&config_start, &mut config_warnings)?
-        }
-    };
-
+/// The analysis half of `run`: merge config with the command line, analyze, and
+/// apply the config's `ignore` globs. Prints nothing and decides no exit code,
+/// so `check` can run it alongside the other two analyses.
+///
+/// The returned workspace collects the context's config warnings too, in the
+/// order they were produced: discovery, then config, then ignore-glob problems.
+pub(crate) fn execute(context: &Context, args: &DeadCodeArgs) -> anyhow::Result<Analysis> {
     let effective = config::merge(
-        resolved_config.as_ref().map(|r| &r.config),
+        context.config.as_ref().map(|resolved| &resolved.config),
         args.aggressive,
         &args.roots,
         &args.library_projects,
     );
 
     let mut analysis = analyze(
-        &root,
+        &context.root,
         effective.aggressive,
         &effective.roots,
         &effective.library_projects,
     )?;
-    analysis.workspace.warnings.append(&mut config_warnings);
+    analysis
+        .workspace
+        .warnings
+        .extend(context.warnings.iter().cloned());
 
-    if let Some(resolved) = &resolved_config
+    if let Some(resolved) = &context.config
         && let Some(ignore) = &resolved.config.ignore
     {
         suppress::apply_config_ignores(
@@ -117,6 +104,13 @@ pub fn run(args: &DeadCodeArgs) -> anyhow::Result<ExitCode> {
             &mut analysis.workspace.warnings,
         );
     }
+
+    Ok(analysis)
+}
+
+pub fn run(args: &DeadCodeArgs) -> anyhow::Result<ExitCode> {
+    let context = commands::resolve(&args.path, &args.config)?;
+    let analysis = execute(&context, args)?;
 
     for warning in &analysis.workspace.warnings {
         eprintln!("warning: {warning}");
