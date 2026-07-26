@@ -7,6 +7,12 @@
     "light": "#22C55E",
     "dark": "#15803D"
   },
+  "seo": {
+    "metatags": {
+      "og:site_name": "roe",
+      "og:type": "website"
+    }
+  },
   "navigation": {
     "groups": [
       {
