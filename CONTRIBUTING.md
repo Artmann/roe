@@ -137,7 +137,16 @@ code style guide.
    edge, and the members not on that path ride along in `Cycle::others`
    rather than being spliced into the arrow chain. Nodes and neighbors are
    sorted at every stage, so the output is deterministic run to run.
-5. **Rank hotspots** (only with `--hotspots`) — `churn::analyze` walks git
+5. **Baseline** (only with `--baseline`, or `health.baseline` in a config) —
+   `baseline::apply` drops every finding whose `(kind, name)` pair is already
+   recorded, and every cycle whose sorted member set is. It runs after inline
+   suppressions and before `summarize`, so hidden findings inflate no count
+   except `summary.baselined`. The line number is deliberately not part of
+   the key — a baseline that went stale whenever a file grew would be
+   worthless — and a matched finding whose metric rose above the recorded one
+   survives anyway, since that is new debt in an old place. Entries matching
+   nothing are stale and produce a warning, never a failure.
+6. **Rank hotspots** (only with `--hotspots`) — `churn::analyze` walks git
    history with gix, diffing first parents only so a squashed pull request
    counts once, and discounts each commit on an exponential decay with a
    90-day half-life. `hotspot::rank` multiplies that by complexity density

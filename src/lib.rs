@@ -1,4 +1,5 @@
 pub mod analyze;
+pub mod baseline;
 pub mod churn;
 pub mod cli;
 pub mod clone_extraction;

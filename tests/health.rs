@@ -1,12 +1,22 @@
 use std::path::PathBuf;
 
-use roe::commands::health::{Thresholds, analyze};
+use roe::baseline;
+use roe::commands::health::{Thresholds, analyze, analyze_with_baseline};
 use roe::model::HealthFindingKind;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name)
+}
+
+/// A writable path for a baseline the test owns. `CARGO_TARGET_TMPDIR` is
+/// per-crate and cleaned by `cargo clean`, so nothing leaks into the fixtures.
+fn scratch(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("baselines");
+    std::fs::create_dir_all(&dir).expect("the scratch directory is writable");
+
+    dir.join(name)
 }
 
 /// Loose thresholds nothing in the fixtures should trip.
@@ -575,6 +585,88 @@ fn a_scoped_marker_suppresses_only_the_rule_it_names() {
                 "HealthSuppress.Widget.Unmarked".to_string(),
             ),
         ],
+    );
+}
+
+#[test]
+fn a_baseline_hides_what_it_recorded_and_reports_what_it_did_not() {
+    // The whole point of the feature: adopt roe on a codebase that already
+    // has debt, and only what lands after that day fails the build.
+    let mut thresholds = lenient();
+    thresholds.max_complexity = 3;
+
+    let path = scratch("hides-what-it-recorded.json");
+    let today = analyze(&fixture("health_metrics"), thresholds).expect("analysis should succeed");
+    assert!(today.result.has_findings(), "there is debt to record");
+
+    let (findings, cycles) = baseline::write(&path, &today.result, &today.workspace.root)
+        .expect("the baseline is written");
+    assert_eq!((findings, cycles), (1, 1));
+
+    let unchanged = analyze_with_baseline(&fixture("health_metrics"), thresholds, &path)
+        .expect("analysis should succeed");
+    assert!(
+        !unchanged.result.has_findings(),
+        "recorded debt is not reported again, got {:?}",
+        unchanged.result.findings
+    );
+    assert_eq!(unchanged.result.summary.baselined, Some(2));
+    assert!(
+        !unchanged
+            .workspace
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("stale")),
+        "every entry matched, so there is nothing to warn about, got {:?}",
+        unchanged.workspace.warnings
+    );
+
+    // A tighter limit stands in for new code: the finding it produces is not
+    // in the baseline, so it — and only it — comes back.
+    let mut tighter = thresholds;
+    tighter.max_type_members = 3;
+
+    let after = analyze_with_baseline(&fixture("health_metrics"), tighter, &path)
+        .expect("analysis should succeed");
+    let names: Vec<&str> = after
+        .result
+        .findings
+        .iter()
+        .map(|finding| finding.name.as_str())
+        .collect();
+
+    assert_eq!(names, vec!["HealthMetrics.Widget"]);
+    assert!(
+        after.result.cycles.is_empty(),
+        "the recorded cycle stays hidden"
+    );
+    assert_eq!(after.result.summary.baselined, Some(2));
+}
+
+#[test]
+fn a_baseline_entry_that_matches_nothing_warns_without_failing() {
+    let mut thresholds = lenient();
+    thresholds.max_complexity = 3;
+
+    let path = scratch("stale-entries.json");
+    let today = analyze(&fixture("health_metrics"), thresholds).expect("analysis should succeed");
+    baseline::write(&path, &today.result, &today.workspace.root).expect("the baseline is written");
+
+    // Relaxing the limit stands in for the debt being paid down: the
+    // complexity entry now covers nothing, while the cycle still matches.
+    let fixed = analyze_with_baseline(&fixture("health_metrics"), lenient(), &path)
+        .expect("analysis should succeed");
+
+    assert!(!fixed.result.has_findings());
+    assert!(
+        fixed
+            .workspace
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("1 stale entry in")
+                && warning.contains("--write-baseline")),
+        "a stale entry is named and made actionable, got {:?}",
+        fixed.workspace.warnings
     );
 }
 

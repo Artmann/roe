@@ -15,7 +15,8 @@ use crate::model::{
 };
 use crate::resolve::{Resolution, SymbolFlags};
 use crate::{
-    churn, commands, config, coupling, discover, extract, graph, hotspot, report, resolve, suppress,
+    baseline, churn, commands, config, coupling, discover, extract, graph, hotspot, report,
+    resolve, suppress,
 };
 
 pub struct Analysis {
@@ -55,7 +56,17 @@ impl From<EffectiveHealth> for Thresholds {
 /// graph → complexity/size/coupling checks. No reachability analysis runs —
 /// health flags issues in code regardless of whether it's dead.
 pub fn analyze(root: &Path, thresholds: Thresholds) -> anyhow::Result<Analysis> {
-    analyze_inner(root, thresholds, None, None)
+    analyze_inner(root, thresholds, None, None, None)
+}
+
+/// The same pipeline, filtered against a [baseline](crate::baseline) file so
+/// only findings it doesn't already record survive.
+pub fn analyze_with_baseline(
+    root: &Path,
+    thresholds: Thresholds,
+    baseline: &Path,
+) -> anyhow::Result<Analysis> {
+    analyze_inner(root, thresholds, None, None, Some(baseline))
 }
 
 /// Same pipeline, plus the two things only `run` needs: hotspot ranking (which
@@ -74,6 +85,7 @@ fn analyze_inner(
     thresholds: Thresholds,
     hotspots: Option<usize>,
     ignore: Option<(&[String], &Path)>,
+    baseline: Option<&Path>,
 ) -> anyhow::Result<Analysis> {
     let start = Instant::now();
 
@@ -136,6 +148,23 @@ fn analyze_inner(
 
     suppress::apply_inline_suppressions_health(&mut result, &mut workspace);
 
+    // Applied before the summary so baselined findings inflate no count but
+    // `baselined` itself, and after inline suppressions so an entry covering
+    // something already suppressed reads as stale — which it is.
+    let applied = match baseline {
+        Some(path) => {
+            let recorded = baseline::load(path)?;
+            let applied = baseline::apply(&recorded, &mut result);
+
+            if applied.stale > 0 {
+                workspace.warnings.push(stale_warning(path, applied.stale));
+            }
+
+            Some(applied)
+        }
+        None => None,
+    };
+
     result.summary = summarize(
         &workspace,
         &resolution,
@@ -146,8 +175,26 @@ fn analyze_inner(
         start.elapsed(),
     );
     result.summary.commits_walked = commits_walked;
+    result.summary.baselined = applied.map(|applied| applied.hidden);
 
     Ok(Analysis { workspace, result })
+}
+
+/// A baseline entry matching nothing means the debt it recorded is gone —
+/// good news, and never a failure. It is still worth saying, because until
+/// the file is regenerated that entry would hide the same debt if it came
+/// back.
+fn stale_warning(path: &Path, stale: usize) -> String {
+    let display = crate::paths::display(path);
+    let (noun, verb) = if stale == 1 {
+        ("entry", "matches")
+    } else {
+        ("entries", "match")
+    };
+
+    format!(
+        "{stale} stale {noun} in {display} no longer {verb} any finding — regenerate it with `roe health --write-baseline {display}`"
+    )
 }
 
 /// Rank the analyzed files by the product of their complexity density and
@@ -583,6 +630,7 @@ fn summarize(
         large_types: count(HealthFindingKind::LargeType),
         circular_dependencies: cycles.len(),
         commits_walked: None,
+        baselined: None,
         elapsed_ms: elapsed.as_millis(),
     }
 }
@@ -590,12 +638,29 @@ fn summarize(
 /// The analysis half of `run`: merge the config's `health` block with the
 /// command line, then analyze. Prints nothing and decides no exit code, so
 /// `check` can run it alongside the other two analyses.
+///
+/// `--write-baseline` suppresses baseline filtering even when a config names
+/// one, so the recorded file describes the codebase rather than whatever the
+/// previous baseline left over.
 pub(crate) fn execute(context: &Context, args: &HealthArgs) -> anyhow::Result<Analysis> {
+    let health = context
+        .config
+        .as_ref()
+        .and_then(|resolved| resolved.config.health.as_ref());
+    let baseline = match args.write_baseline {
+        Some(_) => None,
+        None => config::resolve_baseline(
+            health,
+            context
+                .config
+                .as_ref()
+                .map(|resolved| resolved.dir.as_path()),
+            args.baseline.as_deref(),
+        ),
+    };
+
     let effective = config::merge_health(
-        context
-            .config
-            .as_ref()
-            .and_then(|resolved| resolved.config.health.as_ref()),
+        health,
         config::HealthOverrides {
             max_complexity: args.max_complexity,
             max_cognitive: args.max_cognitive,
@@ -608,7 +673,13 @@ pub(crate) fn execute(context: &Context, args: &HealthArgs) -> anyhow::Result<An
     );
 
     let hotspots = args.hotspots.then_some(args.top);
-    let mut analysis = analyze_inner(&context.root, effective.into(), hotspots, context.ignore())?;
+    let mut analysis = analyze_inner(
+        &context.root,
+        effective.into(),
+        hotspots,
+        context.ignore(),
+        baseline.as_deref(),
+    )?;
     analysis
         .workspace
         .warnings
@@ -623,6 +694,19 @@ pub fn run(args: &HealthArgs) -> anyhow::Result<ExitCode> {
 
     for warning in &analysis.workspace.warnings {
         eprintln!("warning: {warning}");
+    }
+
+    // Recording the codebase rather than judging it: no report, and always a
+    // clean exit, or the very first CI run would fail on the debt it was
+    // being told to accept.
+    if let Some(path) = &args.write_baseline {
+        let (findings, cycles) = baseline::write(path, &analysis.result, &analysis.workspace.root)?;
+        eprintln!(
+            "wrote {findings} finding(s) and {cycles} cycle(s) to {}",
+            crate::paths::display(path)
+        );
+
+        return Ok(ExitCode::SUCCESS);
     }
 
     Ok(report::health::emit(

@@ -31,6 +31,10 @@ struct JsonSummary {
     /// Omitted unless hotspots were requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     commits_walked: Option<usize>,
+    /// Omitted unless a baseline was in force, so `0` means it hid nothing
+    /// rather than that there wasn't one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    baselined: Option<usize>,
     elapsed_ms: u128,
     /// Omitted when nothing was excluded, so a plain run's summary is
     /// unchanged.
@@ -146,6 +150,7 @@ pub(crate) fn build(result: &HealthResult, workspace: &Workspace) -> JsonReport 
             large_types: result.summary.large_types,
             circular_dependencies: result.summary.circular_dependencies,
             commits_walked: result.summary.commits_walked,
+            baselined: result.summary.baselined,
             elapsed_ms: result.summary.elapsed_ms,
             excluded: build_excluded(result),
         },

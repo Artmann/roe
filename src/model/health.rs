@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::model::{MemberKind, Modifiers};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// `Ord` follows declaration order rather than anything semantic — it exists
+/// so a written [baseline](crate::baseline) groups its entries by check, and
+/// `Hash` so applying one can look findings up by `(kind, name)`.
+#[derive(Debug, Clone, Copy, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HealthFindingKind {
     HighComplexity,
@@ -256,6 +259,10 @@ pub struct HealthSummary {
     /// requested, which is what distinguishes "not asked for" from "no
     /// history".
     pub commits_walked: Option<usize>,
+    /// Findings and cycles a baseline hid — counted nowhere else in this
+    /// summary. `None` when no baseline was in force, so a `Some(0)` reads as
+    /// "the baseline is fully ratcheted" rather than "there wasn't one".
+    pub baselined: Option<usize>,
     pub elapsed_ms: u128,
 }
 

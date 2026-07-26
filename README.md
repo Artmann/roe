@@ -231,6 +231,8 @@ roe health --sort path             # order by file path instead of by severity
 roe health --limit 20              # print at most 20 entries (default: all)
 roe health --hotspots              # also rank complex, frequently changed files
 roe health --hotspots --top 20     # how many to list (default: 10)
+roe health --baseline PATH         # report only findings not already recorded there
+roe health --write-baseline PATH   # record today's findings and exit 0
 roe health --config PATH           # use this roe.json/roe.yaml instead of auto-discovery
 ```
 
@@ -263,6 +265,29 @@ found 8 issues across 7 locations in 6 files — 2 project(s), 118 file(s), 1204
 That line only appears when something was excluded. It's what tells you a
 setting took effect — which matters most when it came from a config file,
 where there's no command line to eyeball.
+
+#### Baselines
+
+Turning `health` on over an existing codebase means starting at a few hundred
+findings, which fails every build until someone fixes all of them. Record
+what's already there once, and CI gates on new debt from day one:
+
+```
+$ roe health --write-baseline roe-baseline.json
+wrote 119 finding(s) and 1 cycle(s) to roe-baseline.json
+
+$ roe health --baseline roe-baseline.json
+✓ no health issues found · 3 project(s), 160 file(s) scanned in 274 ms
+  120 baselined finding(s) hidden
+```
+
+Entries match on kind and name, never on the line number, so a baselined
+method stays baselined when something above it in the file grows. A matched
+finding whose metric went *up* is reported anyway — a method going from
+cyclomatic 12 to 30 is new debt in an old place. Entries that no longer match
+anything are reported as a warning, so re-running `--write-baseline` after a
+green run ratchets the fixed ones away for good. Set `health.baseline` in a
+config file instead of passing the flag and a bare `roe` picks it up too.
 
 #### What it checks, and what to do about it
 
@@ -420,7 +445,8 @@ walking up from the analysis root to the nearest directory containing one
     "maxParameters": 6,
     "maxFileLines": 750,
     "maxTypeMembers": 25,
-    "excludeTests": true
+    "excludeTests": true,
+    "baseline": "roe-baseline.json"
   }
 }
 ```
@@ -439,7 +465,9 @@ The `health` block does the same for `roe health`'s thresholds, so a CI
 invocation doesn't have to repeat six flags — an explicit flag wins, then the
 config value, then the built-in default. Every field is optional, and an
 unrecognised one is an error rather than a silent no-op, so a typo can't leave
-you thinking a limit is in force when it isn't.
+you thinking a limit is in force when it isn't. `baseline` names a baseline
+file, resolved relative to the config file's own directory the way `ignore`
+globs are.
 
 ## Known limitations
 

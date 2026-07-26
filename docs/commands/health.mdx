@@ -57,6 +57,8 @@ it sits. The worst offenders come first.
 | `--limit <N>` | Print at most this many findings; `0` prints all of them. Defaults to `0`. |
 | `--hotspots` | Also rank files that are both complex and frequently changed, read from git history. |
 | `--top <N>` | How many hotspots to list. Defaults to `10`. Requires `--hotspots`. |
+| `--baseline <PATH>` | Hide the findings recorded in this [baseline file](#baselines), so only new ones are reported. |
+| `--write-baseline <PATH>` | Record today's findings to this path and exit `0`. Conflicts with `--baseline`. |
 | `--config <PATH>` | Use this `roe.json`/`roe.yaml`/`roe.yml` instead of [auto-discovery](/configuration). |
 
 Every threshold can also be set persistently in a
@@ -284,6 +286,104 @@ ranking would make the check useless as a CI gate.
   must be inside a git repository. If it isn't, `--hotspots` fails with exit
   `2` rather than silently reporting nothing.
 </Note>
+
+## Baselines
+
+Turning `roe health` on over a codebase that didn't have it from day one
+means starting at a few hundred findings, which fails every build until
+someone fixes all of them. A baseline records what's already there so CI can
+gate on **new** debt from the first day, and the existing debt gets paid down
+on its own schedule.
+
+```bash
+roe health --write-baseline roe-baseline.json   # accept today's findings
+roe health --baseline roe-baseline.json         # fail only on new ones
+```
+
+`--write-baseline` writes the file, reports what it recorded on stderr, and
+exits `0` without printing a report:
+
+```text
+wrote 119 finding(s) and 1 cycle(s) to roe-baseline.json
+```
+
+Commit that file. From then on, `--baseline roe-baseline.json` reports and
+exits on new findings only, and the footer says how many it hid:
+
+```text
+✓ no health issues found · 3 project(s), 160 file(s) scanned in 274 ms
+  120 baselined finding(s) hidden
+```
+
+The two flags conflict — writing a baseline through a baseline would record a
+filtered picture of the codebase.
+
+### The file
+
+```json roe-baseline.json
+{
+  "version": 1,
+  "findings": [
+    {
+      "kind": "too-many-parameters",
+      "name": "App.Units.Unit..ctor",
+      "file": "src/App/Units/Unit.cs",
+      "metric": 16
+    }
+  ],
+  "cycles": [
+    { "members": ["App.Orders.Invoice", "App.Orders.Order"] }
+  ]
+}
+```
+
+Entries are written sorted by `kind` and then `name`, so the file diffs
+cleanly and a regenerated baseline shows only what actually changed. Unknown
+fields and unknown `version`s are rejected rather than ignored, the same way
+[config files](/configuration) are.
+
+### What matches
+
+A finding is hidden when its **kind and name** match a baseline entry. The
+line number is deliberately not part of the match: a baselined method stays
+baselined when something above it in the file grows by three lines, which is
+the whole point of recording it once. `file` is written for readability and
+diffing and isn't matched on either.
+
+Cycles match on their set of member names, regardless of the order the path
+happens to be printed in.
+
+### Metric regressions still report
+
+A matched finding whose metric is **higher** than the baselined value is
+reported anyway. A method going from cyclomatic 12 to 30 is new debt in an
+old place, and a baseline that hid it would let a rewrite land unexamined
+under the cover of an entry that was about something much smaller. Equal or
+lower stays hidden.
+
+### Stale entries
+
+A baseline entry that no longer matches anything — the method was fixed,
+renamed, or deleted — is reported as a warning, never a failure:
+
+```text
+warning: 4 stale entries in roe-baseline.json no longer match any finding — regenerate it with `roe health --write-baseline roe-baseline.json`
+```
+
+Regenerating after a green run is the ratchet: fixed debt can't come back
+under the entry that used to cover it.
+
+### In CI
+
+```yaml
+- name: Check code health
+  run: roe health --baseline roe-baseline.json
+```
+
+The step passes while the codebase only carries its known debt, and fails the
+moment a pull request adds a finding that isn't in the file. Set
+`health.baseline` in a [config file](/configuration) instead if you'd rather
+a bare `roe` and `roe check` picked it up too.
 
 ## Suppressing findings
 
