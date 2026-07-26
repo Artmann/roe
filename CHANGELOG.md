@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0](https://github.com/Artmann/roe/compare/roe-v1.2.0...roe-v1.3.0) (2026-07-26)
+
+
+### Features
+
+* **check:** Run all three analyses when no command is given ([8408a87](https://github.com/Artmann/roe/commit/8408a876c7271e17cabd1a28bb80d91bcae5c5ae))
+* **health:** Add a baseline so CI can gate on new findings ([41f4267](https://github.com/Artmann/roe/commit/41f4267c76276845bf0bf0f43d9c6b27f09a0910)), closes [#23](https://github.com/Artmann/roe/issues/23)
+
+
+### Bug Fixes
+
+* **health:** Count required input parameters, not declared ones ([65e2a0e](https://github.com/Artmann/roe/commit/65e2a0e76922535271ad435bc61b2af91f93ed92))
+* **health:** Exclude const fields from the large-type member count ([1f5b3cf](https://github.com/Artmann/roe/commit/1f5b3cf78c757fd8db6d27e69c9e908d0fbfbf31))
+* **health:** Report what was actually scanned in the footer ([73a0be7](https://github.com/Artmann/roe/commit/73a0be7c09bd68a079f271bc322ea0e3c2de31ab))
+* **health:** Stop counting ?? toward cyclomatic complexity ([bf82e47](https://github.com/Artmann/roe/commit/bf82e4710866e569c0b468f37162fa79465a253e))
+
 ## [1.2.0](https://github.com/Artmann/roe/compare/roe-v1.1.0...roe-v1.2.0) (2026-07-25)
 
 
