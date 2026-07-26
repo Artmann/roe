@@ -117,7 +117,13 @@ code style guide.
    `&&` counts once. Type size comes from `MemberBreakdown::record`, which
    buckets constructors, operators, and indexers into `methods` and refuses
    enum cases and `const` fields outright — neither carries behaviour, so
-   neither can be part of the cohesion problem the check looks for.
+   neither can be part of the cohesion problem the check looks for. Signature
+   size comes from `count_parameters`, which returns a `ParameterBreakdown`
+   rather than a bare count: only *required* input parameters are compared
+   against the limit, since a defaulted parameter, a `params` array, or an
+   `out` parameter costs the caller nothing. The declared total is kept too —
+   `member_names` needs it for the `/arity` overload suffix, which has to
+   match the source signature.
 3. **Threshold** — `collect_findings` emits a finding where a metric is
    strictly greater than its limit, so a value equal to the threshold is
    still clean. `HealthFinding::severity` is `metric / threshold`, which is

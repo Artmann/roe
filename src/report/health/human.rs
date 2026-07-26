@@ -343,14 +343,19 @@ fn describe(finding: &HealthFinding) -> String {
 
     // The breakdown is context, not a verdict: thirty auto-properties and
     // thirty methods trip the same threshold and mean entirely different
-    // things, so it is printed plainly and left to the reader.
-    match finding.breakdown {
-        Some(breakdown) => format!(
-            "{colored} {}",
-            format!("({})", breakdown.describe()).dimmed()
-        ),
-        None => colored.to_string(),
+    // things, so it is printed plainly and left to the reader. The same goes
+    // for a parameter list that is long on paper but short at the call site.
+    let detail = match (finding.breakdown, finding.parameters) {
+        (Some(breakdown), _) => breakdown.describe(),
+        (None, Some(parameters)) => parameters.describe(),
+        (None, None) => String::new(),
+    };
+
+    if detail.is_empty() {
+        return colored.to_string();
     }
+
+    format!("{colored} {}", format!("({detail})").dimmed())
 }
 
 fn print_cycle(cycle: &CircularDependency, workspace: &Workspace) {
@@ -438,6 +443,7 @@ mod tests {
             metric,
             threshold,
             breakdown: None,
+            parameters: None,
         }
     }
 

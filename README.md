@@ -223,7 +223,7 @@ roe health --format json           # machine-readable, stable v1 schema
 roe health --max-complexity 10     # cyclomatic complexity per method (default: 10)
 roe health --max-cognitive 15      # cognitive complexity per method (default: 15)
 roe health --max-method-lines 40   # lines per method body (default: 40)
-roe health --max-parameters 5      # parameters per method (default: 5)
+roe health --max-parameters 5      # required parameters per method (default: 5)
 roe health --max-file-lines 750    # lines per file (default: 750)
 roe health --max-type-members 20   # declared members per type (default: 20)
 roe health --exclude-tests         # skip test projects (default: off)
@@ -257,10 +257,16 @@ globs from a config file apply here too.
 | **high complexity** | Cyclomatic complexity — one point per `if`, loop, `catch`, `case`, ternary, and `&&`/`\|\|`, plus one baseline. Counts the independent paths through a method, which is roughly the number of tests needed to cover it. `??` doesn't count: it's a defaulting idiom rather than a path anyone writes a test for, and any real branching behind it is still counted on its own. | Extract the branches into named methods; replace flag parameters and `switch` ladders with polymorphism or a lookup table; use guard clauses to flatten nesting. |
 | **hard to follow** | Cognitive complexity — the same control-flow structures, but each one costs more the deeper it is nested, and shapes the eye reads at a glance are forgiven: an `else if` chain stays flat, a whole `switch` costs 1 no matter how many cases it has, and a run of `&&` counts once. Estimates how hard a method is to *understand*, where cyclomatic estimates how hard it is to *test*. | Flatten first — early returns and guard clauses are worth more here than extraction, since removing one level of nesting discounts everything inside it. Then extract the deepest block into a named method, which resets its nesting to zero. |
 | **long method** | Lines spanned by a method body. | Extract Method along the seams — usually the comment-delimited "sections" of the body are the extractions waiting to happen. |
-| **too many parameters** | Parameters in a method's declaration. | Introduce a Parameter Object: bundle the arguments that always travel together into a `record`, so `Send(string to, string cc, string subject, string body, bool html, int retries)` becomes `Send(EmailMessage message)`. If several belong to the same existing object, Preserve Whole Object and pass that instead. |
+| **too many parameters** | Required parameters in a method's declaration — the ones a caller has to supply and think about. Defaulted parameters, `params` arrays, and `out` parameters don't count; `ref`, `in`, and an extension method's `this` receiver do. The declared total is still printed alongside. | Introduce a Parameter Object: bundle the arguments that always travel together into a `record`, so `Send(string to, string cc, string subject, string body, bool html, int retries)` becomes `Send(EmailMessage message)`. If several belong to the same existing object, Preserve Whole Object and pass that instead. |
 | **large file** | Total lines in a `.cs` file. | Usually a symptom rather than a cause — split the file per type, or move nested helper types into their own files. |
 | **large type** | Declared members on a type — methods, properties, fields, and events. An enum's cases don't count, since having many of them is the point of an enum, and neither do `const` fields, which are names for literals rather than state or behaviour. `static readonly` fields do count. | Extract Class: find the cluster of fields and the methods that touch only those fields, and move them out together. A type doing two jobs usually shows up as two such clusters. |
 | **circular dependency** | Types that reference each other, directly or through a longer chain. | Break the loop by depending on an abstraction: extract an interface that one side owns and the other implements (Dependency Inversion), or move the shared concept both sides need into a third type neither one owns. |
+
+A `too many parameters` entry counts what the *caller* has to supply, which is
+the burden the check is about. `Sum(int a, int b, int p3 = 0, … int p16 = 0)`
+is called as `Sum(1, 2)`, so it measures 2, not 16. When the declaration has
+more to it than that, the entry says so:
+`8/5 params (11 declared: 8 required, 2 optional, 1 out)`.
 
 A `large type` entry carries the breakdown of what its members actually are —
 `34/20 members (19 properties, 15 methods)`. Thirty auto-properties is a data

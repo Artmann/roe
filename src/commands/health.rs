@@ -247,6 +247,7 @@ fn collect_findings(
                     metric: decl.cyclomatic,
                     threshold: thresholds.max_complexity,
                     breakdown: None,
+                    parameters: None,
                 });
             }
 
@@ -261,6 +262,7 @@ fn collect_findings(
                     metric: decl.cognitive,
                     threshold: thresholds.max_cognitive,
                     breakdown: None,
+                    parameters: None,
                 });
             }
 
@@ -275,10 +277,15 @@ fn collect_findings(
                     metric: decl.body_lines,
                     threshold: thresholds.max_method_lines,
                     breakdown: None,
+                    parameters: None,
                 });
             }
 
-            if decl.parameter_count > thresholds.max_parameters {
+            // Only the required parameters are measured — the threshold is
+            // about call-site burden, and a defaulted or `out` parameter puts
+            // none on the caller. The full declaration rides along so the
+            // report can still show it.
+            if decl.parameters.required > thresholds.max_parameters {
                 findings.push(HealthFinding {
                     kind: HealthFindingKind::TooManyParameters,
                     name,
@@ -286,9 +293,10 @@ fn collect_findings(
                     file: file.path.clone(),
                     line: decl.line,
                     column: decl.column,
-                    metric: decl.parameter_count,
+                    metric: decl.parameters.required,
                     threshold: thresholds.max_parameters,
                     breakdown: None,
+                    parameters: Some(decl.parameters),
                 });
             }
         }
@@ -308,6 +316,7 @@ fn collect_findings(
                 metric: file_facts.line_count,
                 threshold: thresholds.max_file_lines,
                 breakdown: None,
+                parameters: None,
             });
         }
     }
@@ -361,6 +370,7 @@ fn collect_findings(
             metric: breakdown.total(),
             threshold: thresholds.max_type_members,
             breakdown: Some(breakdown),
+            parameters: None,
         });
     }
 
@@ -450,9 +460,12 @@ fn member_names(
 
     for (local_index, is_ambiguous) in ambiguous.into_iter().enumerate() {
         if is_ambiguous {
+            // The declared total, not the required count — the suffix exists
+            // to tell overloads apart, so it has to match the signature the
+            // reader will find in the source.
             names[local_index].push_str(&format!(
                 "/{}",
-                file_facts.decls[local_index].parameter_count
+                file_facts.decls[local_index].parameters.total()
             ));
         }
     }

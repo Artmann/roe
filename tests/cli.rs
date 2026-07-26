@@ -469,6 +469,73 @@ fn health_json_output_is_stable() {
 }
 
 #[test]
+fn health_prints_the_declared_signature_next_to_the_required_count() {
+    // `Sum` declares sixteen parameters but asks the caller for two, so the
+    // number the report leads with has to be explained or it reads as a bug.
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_optional_params"),
+            "--max-parameters",
+            "1",
+        ])
+        .output()
+        .expect("command runs");
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    assert!(
+        stdout.contains("2/1 params (16 declared: 2 required, 14 optional)"),
+        "a defaulted-heavy signature must print its split, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("4/1 params (6 declared: 4 required, 2 out)"),
+        "an out-heavy signature must print its split, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("6/1 params\n") || stdout.contains("6/1 params "),
+        "an all-required signature has nothing to add, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("6 declared: 6 required"),
+        "saying it twice is noise, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn health_json_carries_the_parameter_split() {
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_optional_params"),
+            "--format",
+            "json",
+            "--max-parameters",
+            "1",
+        ])
+        .output()
+        .expect("command runs");
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let findings = parsed["findings"].as_array().expect("findings array");
+
+    let try_get = findings
+        .iter()
+        .find(|finding| finding["name"] == "OptionalParams.Signatures.TryGet")
+        .expect("TryGet is reported");
+
+    assert_eq!(try_get["kind"], "too-many-parameters");
+    assert_eq!(try_get["metric"], 4);
+    assert_eq!(try_get["parameters"]["required"], 4);
+    assert_eq!(try_get["parameters"]["optional"], 0);
+    assert_eq!(try_get["parameters"]["out"], 2);
+}
+
+#[test]
 fn health_reports_a_cycle_on_its_own() {
     // Nothing here trips a threshold, so the circular dependency is the only
     // thing left — and it alone has to fail the build and lead the report.

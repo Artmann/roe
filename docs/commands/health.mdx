@@ -49,7 +49,7 @@ it sits. The worst offenders come first.
 | `--max-complexity <N>` | Flag methods and properties above this cyclomatic complexity. Defaults to `10`. |
 | `--max-cognitive <N>` | Flag methods and properties above this cognitive complexity. Defaults to `15`. |
 | `--max-method-lines <N>` | Flag methods and properties whose body spans more than this many lines. Defaults to `40`. |
-| `--max-parameters <N>` | Flag methods, operators, and indexers declared with more than this many parameters. Defaults to `5`. |
+| `--max-parameters <N>` | Flag methods, operators, and indexers with more than this many *required* parameters. Defaults to `5`. |
 | `--max-file-lines <N>` | Flag files longer than this many lines. Defaults to `750`. |
 | `--max-type-members <N>` | Flag types with more than this many members. Defaults to `20`. |
 | `--exclude-tests` | Skip test projects, including any circular dependency that touches one. Off by default. |
@@ -70,7 +70,7 @@ than repeating six flags on each invocation.
 | Complex method | A method or property whose cyclomatic complexity — the number of independent paths through it — exceeds `--max-complexity`. One point per `if`, loop, `catch`, `switch` arm, ternary, and `&&`/`\|\|`, plus one baseline. |
 | Hard-to-follow method | A method or property whose cognitive complexity exceeds `--max-cognitive`. Like cyclomatic, but weighted by nesting depth, so deeply nested code scores worse than the same number of flat branches. |
 | Long method | A method or property whose body spans more than `--max-method-lines` lines. |
-| Over-parameterized method | A method, operator, or indexer with more than `--max-parameters` parameters. |
+| Over-parameterized method | A method, operator, or indexer with more than `--max-parameters` **required** parameters. Defaulted parameters, `params` arrays, and `out` parameters don't count towards the limit — see [Only required parameters count](#only-required-parameters-count). |
 | Large file | A file longer than `--max-file-lines` lines. |
 | Large type | A type with more than `--max-type-members` members. |
 | Circular dependency | Two or more types that reference each other in a cycle. Has no threshold and can't be turned off. |
@@ -155,6 +155,44 @@ looks for. A class holding fifty tuning constants is a lookup table, not a god
 class. `static readonly` fields *do* still count: roe has no type analysis, so
 it can't tell a `static readonly float` tuning value from a `static readonly
 HttpClient` that the type genuinely depends on.
+
+### Only required parameters count
+
+The point of a parameter limit is call-site burden: how much a caller has to
+supply, and how much they have to keep straight while doing it. A parameter
+the caller can leave out costs them nothing, so it isn't counted.
+
+A parameter is **required** when the caller has to pass something and think
+about what. That means:
+
+| Parameter | Counts | Why |
+| --- | --- | --- |
+| `int amount` | Yes | The caller has to supply it. |
+| `ref int total` | Yes | Supplied, and the caller has to reason about it being mutated. |
+| `in ReadOnlySpan<byte> data` | Yes | Supplied; `in` is a calling convention, not an escape hatch. |
+| `this Widget widget` | Yes | The extension receiver — written as `widget.Method(…)`, but still an argument. |
+| `int retries = 3` | No | Omit it and the default applies. |
+| `params object[] extras` | No | Omit it and it's empty. |
+| `out int result` | No | The caller supplies nothing; it's a return value wearing a parameter's clothes. |
+
+Findings print the whole picture, so nothing is hidden — the metric is the
+required count, and the declared signature follows in parentheses:
+
+```text
+    42:17  App.Reporting.Builder.Build
+           8/5 params (11 declared: 8 required, 2 optional, 1 out)
+```
+
+When every parameter is required, the parenthetical is dropped: repeating
+`6 declared: 6 required` next to `6/5 params` would be noise.
+
+<Note>
+  A method with a dozen `out` parameters is still worth a second look — it's
+  usually asking to return a `record` instead. roe just doesn't report it
+  under a check whose stated meaning is "too much to pass in". The declared
+  total is always printed, so a long signature is still visible in the report
+  and in `--format json`.
+</Note>
 
 ### Overloads
 
