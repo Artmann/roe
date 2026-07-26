@@ -43,3 +43,12 @@ pub struct AnalysisResult {
     /// Notes about analysis mode (e.g. library mode) surfaced in output.
     pub notes: Vec<String>,
 }
+
+impl AnalysisResult {
+    /// Whether this analysis has anything to report — the single definition of
+    /// "not clean", used both for this command's exit code and for the combined
+    /// `check` run's.
+    pub fn has_findings(&self) -> bool {
+        !self.findings.is_empty()
+    }
+}

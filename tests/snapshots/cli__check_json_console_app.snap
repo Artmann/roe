@@ -1,0 +1,76 @@
+---
+source: tests/cli.rs
+assertion_line: 672
+expression: stdout
+---
+{
+  "version": 1,
+  "root": "<repo>/tests/fixtures/console_app",
+  "deadCode": {
+    "version": 1,
+    "root": "<repo>/tests/fixtures/console_app",
+    "summary": {
+      "projects": 1,
+      "filesScanned": 4,
+      "symbols": 14,
+      "unusedTypes": 0,
+      "unusedMembers": 1,
+      "unusedFiles": 1,
+      "elapsedMs": 0
+    },
+    "notes": [],
+    "findings": [
+      {
+        "kind": "unused-file",
+        "name": "ConsoleApp/DeadClass.cs",
+        "project": "ConsoleApp",
+        "file": "ConsoleApp/DeadClass.cs",
+        "line": 1,
+        "column": 1
+      },
+      {
+        "kind": "unused-member",
+        "symbolKind": "method",
+        "name": "ConsoleApp.ConsoleGreeter.UnusedHelper",
+        "project": "ConsoleApp",
+        "file": "ConsoleApp/ConsoleGreeter.cs",
+        "line": 15,
+        "column": 20,
+        "visibility": "private"
+      }
+    ]
+  },
+  "dupes": {
+    "version": 1,
+    "root": "<repo>/tests/fixtures/console_app",
+    "mode": "exact",
+    "summary": {
+      "projects": 1,
+      "filesScanned": 4,
+      "groups": 0,
+      "duplicatedLines": 0,
+      "elapsedMs": 0
+    },
+    "groups": []
+  },
+  "health": {
+    "version": 1,
+    "root": "<repo>/tests/fixtures/console_app",
+    "summary": {
+      "projects": 1,
+      "filesScanned": 4,
+      "symbols": 14,
+      "highComplexity": 0,
+      "highCognitiveComplexity": 0,
+      "longMethods": 0,
+      "tooManyParameters": 0,
+      "largeFiles": 0,
+      "largeTypes": 0,
+      "circularDependencies": 0,
+      "elapsedMs": 0
+    },
+    "findings": [],
+    "cycles": [],
+    "hotspots": []
+  }
+}

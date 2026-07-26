@@ -11,6 +11,16 @@ file, and defaults to the current directory. There's nothing to configure up
 front — point roe at your solution and read the report.
 
 <Steps>
+  <Step title="Scan everything at once">
+    ```bash
+    roe path/to/solution
+    ```
+
+    With no command, roe runs all three analyses and prints each report under
+    its own section header — see [`roe check`](/commands/check). That's the
+    fastest way to see where a codebase stands, and the steps below break down
+    what each section is telling you.
+  </Step>
   <Step title="Scan for dead code">
     ```bash
     roe dead-code path/to/solution
@@ -67,7 +77,9 @@ front — point roe at your solution and read the report.
   <Step title="Wire it into scripts or CI">
     Every command exits `0` when clean, `1` when it has findings to report,
     and `2` on error, and all support `--format json` for a stable,
-    machine-readable report. See [Exit codes](/reference/exit-codes) and
+    machine-readable report. A bare `roe .` exits `1` if any of the three
+    analyses reports, so it works as a single gate. See
+    [Exit codes](/reference/exit-codes) and
     [JSON output](/reference/json-output).
   </Step>
   <Step title="Tune out false positives">

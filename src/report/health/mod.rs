@@ -1,5 +1,5 @@
-mod human;
-mod json;
+pub(crate) mod human;
+pub(crate) mod json;
 
 use std::process::ExitCode;
 
@@ -20,9 +20,9 @@ pub fn emit(
         OutputFormat::Human => human::print(result, workspace, sort, limit),
         OutputFormat::Json => json::print(result, workspace),
     }
-    if result.findings.is_empty() && result.cycles.is_empty() {
-        ExitCode::SUCCESS
-    } else {
+    if result.has_findings() {
         ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }

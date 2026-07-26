@@ -189,6 +189,16 @@ pub struct HealthResult {
     pub summary: HealthSummary,
 }
 
+impl HealthResult {
+    /// Whether this analysis has anything to report — the single definition of
+    /// "not clean", used both for this command's exit code and for the combined
+    /// `check` run's. Hotspots are excluded deliberately: every codebase has a
+    /// riskiest file, and that is not a failure.
+    pub fn has_findings(&self) -> bool {
+        !self.findings.is_empty() || !self.cycles.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

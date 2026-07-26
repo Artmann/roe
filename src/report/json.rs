@@ -4,7 +4,7 @@ use crate::model::{AnalysisResult, FindingKind, Workspace};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct JsonReport<'a> {
+pub(crate) struct JsonReport<'a> {
     version: u32,
     root: String,
     summary: JsonSummary,
@@ -41,7 +41,18 @@ struct JsonFinding {
 }
 
 pub fn print(result: &AnalysisResult, workspace: &Workspace) {
-    let report = JsonReport {
+    let report = build(result, workspace);
+
+    match serde_json::to_string_pretty(&report) {
+        Ok(json) => println!("{json}"),
+        Err(error) => eprintln!("error: failed to serialize JSON report: {error}"),
+    }
+}
+
+/// The report as data rather than output, so `check` can nest it inside the
+/// combined document instead of printing it on its own.
+pub(crate) fn build<'a>(result: &'a AnalysisResult, workspace: &Workspace) -> JsonReport<'a> {
+    JsonReport {
         version: 1,
         root: crate::paths::display(&workspace.root),
         summary: JsonSummary {
@@ -73,10 +84,5 @@ pub fn print(result: &AnalysisResult, workspace: &Workspace) {
                 visibility: finding.visibility.map(|v| v.label()),
             })
             .collect(),
-    };
-
-    match serde_json::to_string_pretty(&report) {
-        Ok(json) => println!("{json}"),
-        Err(error) => eprintln!("error: failed to serialize JSON report: {error}"),
     }
 }

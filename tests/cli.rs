@@ -588,3 +588,123 @@ fn health_invalid_path_exits_2() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("error:"));
 }
+
+#[test]
+fn no_command_runs_all_three() {
+    let output = roe()
+        .args([&fixture("console_app")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    insta::assert_snapshot!("check_human_console_app", normalize(&output.stdout));
+}
+
+#[test]
+fn check_command_matches_bare_invocation() {
+    let bare = roe()
+        .args([&fixture("console_app")])
+        .output()
+        .expect("command runs");
+    let explicit = roe()
+        .args(["check", &fixture("console_app")])
+        .output()
+        .expect("command runs");
+
+    assert_eq!(bare.status.code(), explicit.status.code());
+    // Only the elapsed timings differ between two runs of the same analysis.
+    assert_eq!(normalize(&bare.stdout), normalize(&explicit.stdout));
+}
+
+#[test]
+fn check_defaults_to_the_current_directory() {
+    let output = roe()
+        .current_dir(fixture("console_app"))
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("DeadClass.cs"), "got {stdout}");
+}
+
+#[test]
+fn check_clean_codebase_exits_0() {
+    let output = roe()
+        .args([&fixture("generated")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no dead code found"), "got {stdout}");
+    assert!(stdout.contains("no duplicate code found"), "got {stdout}");
+    assert!(stdout.contains("no health issues found"), "got {stdout}");
+}
+
+/// Any one analysis reporting is enough to fail the whole run.
+#[test]
+fn check_exits_1_when_only_dupes_reports() {
+    let output = roe()
+        .args([&fixture("dupes_exact_clone")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no dead code found"), "got {stdout}");
+    assert!(stdout.contains("2 occurrences"), "got {stdout}");
+}
+
+#[test]
+fn check_json_is_a_single_document() {
+    let output = roe()
+        .args([&fixture("console_app"), "--format", "json"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(parsed["version"], 1);
+    // Each section is a standalone v1 report, so tooling written against the
+    // individual commands can consume it unchanged.
+    for section in ["deadCode", "dupes", "health"] {
+        assert_eq!(parsed[section]["version"], 1, "{section} in {stdout}");
+        assert!(parsed[section]["summary"].is_object(), "{section}");
+    }
+    insta::assert_snapshot!("check_json_console_app", stdout);
+}
+
+#[test]
+fn check_invalid_path_exits_2() {
+    let output = roe()
+        .args(["/definitely/not/a/real/path"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error:"), "got {stderr}");
+    // Looks like a path, so no command-list hint.
+    assert!(!stderr.contains("hint:"), "got {stderr}");
+}
+
+/// A mistyped command name lands on the default run's positional path, so the
+/// bare "path not found" error needs to point back at the command list.
+#[test]
+fn mistyped_command_hints_at_the_command_list() {
+    let output = roe().args(["dupez"]).output().expect("command runs");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("path not found: dupez"), "got {stderr}");
+    assert!(stderr.contains("run `roe --help`"), "got {stderr}");
+}
+
+/// All three analyses walk the same tree and hit the same problems, so their
+/// shared warnings must not be printed three times over.
+#[test]
+fn check_reports_each_warning_once() {
+    let output = roe()
+        .args([&fixture("console_app")])
+        .output()
+        .expect("command runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let occurrences = stderr.matches("no obj/ directories found").count();
+    assert_eq!(occurrences, 1, "got {stderr}");
+}

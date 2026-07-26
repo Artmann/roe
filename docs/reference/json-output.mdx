@@ -11,6 +11,33 @@ schemas are versioned: `version` is `1`, and changes within v1 are additive
 only, so parsers can rely on the fields below. Keys are camelCase, optional
 fields are omitted when absent, and `file` paths are relative to `root`.
 
+## `roe --format json`
+
+The combined run — a bare `roe`, or [`roe check`](/commands/check) — prints a
+single document rather than three concatenated ones, so stdout stays valid JSON:
+
+```json
+{
+  "version": 1,
+  "root": "/path/to/solution",
+  "deadCode": { "version": 1, "…": "…" },
+  "dupes": { "version": 1, "…": "…" },
+  "health": { "version": 1, "…": "…" }
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `version` | Schema version of the combined document, `1`. |
+| `root` | The analysis root path. |
+| `deadCode` | The `roe dead-code` report, unchanged. |
+| `dupes` | The `roe dupes` report, unchanged. `mode` is always `exact` — the combined run takes no `--mode` flag. |
+| `health` | The `roe health` report, unchanged. `hotspots` is always empty — hotspots need `roe health --hotspots`. |
+
+Each nested value is byte-for-byte the schema the individual command emits,
+including its own `version` and `root`, so anything already written against
+`roe dead-code --format json` can consume `deadCode` as-is.
+
 ## `roe dead-code --format json`
 
 ```json

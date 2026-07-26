@@ -5,7 +5,7 @@ use crate::model::{DupesResult, Workspace};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct JsonReport {
+pub(crate) struct JsonReport {
     version: u32,
     root: String,
     mode: &'static str,
@@ -42,7 +42,18 @@ struct JsonOccurrence {
 }
 
 pub fn print(result: &DupesResult, workspace: &Workspace, mode: DupeMode) {
-    let report = JsonReport {
+    let report = build(result, workspace, mode);
+
+    match serde_json::to_string_pretty(&report) {
+        Ok(json) => println!("{json}"),
+        Err(error) => eprintln!("error: failed to serialize JSON report: {error}"),
+    }
+}
+
+/// The report as data rather than output, so `check` can nest it inside the
+/// combined document instead of printing it on its own.
+pub(crate) fn build(result: &DupesResult, workspace: &Workspace, mode: DupeMode) -> JsonReport {
+    JsonReport {
         version: 1,
         root: crate::paths::display(&workspace.root),
         mode: match mode {
@@ -80,10 +91,5 @@ pub fn print(result: &DupesResult, workspace: &Workspace, mode: DupeMode) {
                     .collect(),
             })
             .collect(),
-    };
-
-    match serde_json::to_string_pretty(&report) {
-        Ok(json) => println!("{json}"),
-        Err(error) => eprintln!("error: failed to serialize JSON report: {error}"),
     }
 }

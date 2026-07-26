@@ -4,7 +4,7 @@ use crate::model::{CycleMember, HealthFindingKind, HealthResult, MemberBreakdown
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct JsonReport {
+pub(crate) struct JsonReport {
     version: u32,
     root: String,
     summary: JsonSummary,
@@ -85,7 +85,18 @@ struct JsonHotspot {
 }
 
 pub fn print(result: &HealthResult, workspace: &Workspace) {
-    let report = JsonReport {
+    let report = build(result, workspace);
+
+    match serde_json::to_string_pretty(&report) {
+        Ok(json) => println!("{json}"),
+        Err(error) => eprintln!("error: failed to serialize JSON report: {error}"),
+    }
+}
+
+/// The report as data rather than output, so `check` can nest it inside the
+/// combined document instead of printing it on its own.
+pub(crate) fn build(result: &HealthResult, workspace: &Workspace) -> JsonReport {
+    JsonReport {
         version: 1,
         root: crate::paths::display(&workspace.root),
         summary: JsonSummary {
@@ -156,11 +167,6 @@ pub fn print(result: &HealthResult, workspace: &Workspace) {
                 complexity_density: round(hotspot.complexity_density, 4),
             })
             .collect(),
-    };
-
-    match serde_json::to_string_pretty(&report) {
-        Ok(json) => println!("{json}"),
-        Err(error) => eprintln!("error: failed to serialize JSON report: {error}"),
     }
 }
 

@@ -12,6 +12,8 @@ work with. Static analysis only; roe never runs the code it analyzes.
 [![CI](https://github.com/Artmann/roe/actions/workflows/ci.yml/badge.svg)](https://github.com/Artmann/roe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
+Run `roe` with no command and it does all three at once.
+
 [Install](#install) · [Commands](#commands) · [Releases](https://github.com/Artmann/roe/releases) · [Contributing](CONTRIBUTING.md)
 
 </div>
@@ -19,7 +21,9 @@ work with. Static analysis only; roe never runs the code it analyzes.
 ---
 
 ```
-$ roe dead-code path/to/solution
+$ roe path/to/solution
+
+── dead-code ───────────────────────────────────────────────
 
 src/App/Services/LegacyExporter.cs (App)
       1:1  dead file      every declaration in this file is unused
@@ -28,6 +32,18 @@ src/App/Billing/InvoiceService.cs (App)
     88:17  unused member  App.Billing.InvoiceService.RecalculateAll (private method)
 
 found 1 dead file · 0 unused types · 1 unused member — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 74 ms
+
+── dupes ───────────────────────────────────────────────────
+
+2 occurrences (103 tokens, 23 lines)
+  src/App/Billing/PaymentService.cs:15:5-37:2
+  src/App/Shipping/ShippingService.cs:15:5-37:2
+
+found 1 duplicate group · 46 duplicated lines — 3 project(s), 214 file(s) scanned in 31 ms
+
+── health ──────────────────────────────────────────────────
+
+✓ no health issues found · 3 project(s), 214 file(s) scanned in 68 ms
 ```
 
 ## Install
@@ -41,7 +57,7 @@ dotnet tool install --global roe
 Or run it one-shot without installing (.NET 10 SDK or later):
 
 ```
-dnx roe dead-code .
+dnx roe .
 ```
 
 ### npm
@@ -55,7 +71,7 @@ npm), but the command it installs is still `roe`. To run it one-shot without
 installing:
 
 ```
-npx roe-cli dead-code .
+npx roe-cli .
 ```
 
 ### Prebuilt binaries
@@ -71,10 +87,28 @@ xattr -d com.apple.quarantine ./roe
 
 ## Commands
 
-roe has three commands: `dead-code`, `dupes`, and `health`. All accept a path
+roe has three analyses: `dead-code`, `dupes`, and `health`. All accept a path
 to a directory, a `.sln` file, or a `.csproj` file (default: the current
 directory), and all exit `0` when clean, `1` when they have findings to
 report, and `2` on error.
+
+### `roe` / `roe check`
+
+Runs all three analyses over the same path and prints each report under its own
+section header. This is what you get when you run `roe` with no command, and
+it's the one-line answer for CI:
+
+```
+roe                             # all three, current directory
+roe [PATH]                      # directory, .sln, or .csproj
+roe check [PATH]                # identical, spelled out
+roe --format json               # one document with deadCode, dupes, health
+roe --config PATH               # use this roe.json/roe.yaml instead of auto-discovery
+```
+
+It exits `1` if *any* of the three has findings. Per-analysis flags aren't
+accepted here — put them in a [config file](#suppressing-findings), or run the
+individual command when you need to tune one analysis.
 
 ### `roe dead-code`
 

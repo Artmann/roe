@@ -8,6 +8,7 @@ instructions, see [README.md](README.md).
 ```
 cargo test                 # unit + integration + snapshot tests
 cargo clippy --all-targets
+cargo run -- tests/fixtures/console_app          # all three analyses
 cargo run -- dead-code tests/fixtures/console_app
 cargo run -- dupes tests/fixtures/dupes_exact_clone
 cargo run -- health tests/fixtures/health_metrics

@@ -7,6 +7,14 @@ work with. Static analysis only; roe never runs the code it analyzes.
 
 ```
 npm install --global roe-cli
+roe path/to/solution
+```
+
+With no command, roe runs all three analyses and prints each report under its
+own section header. Run one at a time when you want to focus, or tune its
+thresholds:
+
+```
 roe dead-code path/to/solution
 roe dupes path/to/solution
 roe health path/to/solution
@@ -15,7 +23,7 @@ roe health path/to/solution
 Or run it one-shot without installing:
 
 ```
-npx roe-cli dead-code .
+npx roe-cli .
 ```
 
 This package bundles prebuilt binaries for Linux (x64/arm64), macOS

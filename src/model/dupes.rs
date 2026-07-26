@@ -34,3 +34,12 @@ pub struct DupesResult {
     pub groups: Vec<DupeGroup>,
     pub summary: DupesSummary,
 }
+
+impl DupesResult {
+    /// Whether this analysis has anything to report — the single definition of
+    /// "not clean", used both for this command's exit code and for the combined
+    /// `check` run's.
+    pub fn has_findings(&self) -> bool {
+        !self.groups.is_empty()
+    }
+}

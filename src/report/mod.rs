@@ -1,7 +1,8 @@
+pub mod check;
 pub mod dupes;
 pub mod health;
-mod human;
-mod json;
+pub(crate) mod human;
+pub(crate) mod json;
 
 use std::process::ExitCode;
 
@@ -13,9 +14,9 @@ pub fn emit(result: &AnalysisResult, workspace: &Workspace, format: OutputFormat
         OutputFormat::Human => human::print(result, workspace),
         OutputFormat::Json => json::print(result, workspace),
     }
-    if result.findings.is_empty() {
-        ExitCode::SUCCESS
-    } else {
+    if result.has_findings() {
         ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }

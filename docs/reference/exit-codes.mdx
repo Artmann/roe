@@ -6,7 +6,8 @@ icon: "terminal"
 "og:description": "How to use roe in scripts and CI."
 ---
 
-`roe dead-code`, `roe dupes`, and `roe health` all use the same exit codes:
+`roe check` (a bare `roe`), `roe dead-code`, `roe dupes`, and `roe health` all
+use the same exit codes:
 
 | Code | Meaning |
 | --- | --- |
@@ -14,8 +15,14 @@ icon: "terminal"
 | `1` | Findings were reported. |
 | `2` | Error — a message is printed to stderr as `error: …`. |
 
+For the combined run, `1` means **any** of the three analyses had findings, and
+`0` means all three were clean. There's no way to tell from the exit code alone
+which analysis reported — use the individual commands, or
+[`--format json`](/reference/json-output), when you need to distinguish them.
+
 Warnings (for example, about ambiguous config files) go to stderr as
-`warning: …` and don't affect the exit code.
+`warning: …` and don't affect the exit code. The combined run prints each
+distinct warning once, not once per analysis.
 
 <Note>
   [Hotspots](/commands/health#hotspots) are the one exception: they're
@@ -27,6 +34,13 @@ Warnings (for example, about ambiguous config files) go to stderr as
 ## In CI
 
 Because findings exit with `1`, roe fails a CI step out of the box:
+
+```yaml
+- name: Check the codebase
+  run: roe . --format json > roe-report.json
+```
+
+Or gate on one analysis at a time when you want separate steps:
 
 ```yaml
 - name: Check for dead code

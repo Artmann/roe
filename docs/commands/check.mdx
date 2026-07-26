@@ -1,0 +1,89 @@
+---
+title: "roe check"
+description: "Run dead-code, dupes, and health together — what a bare roe does."
+icon: "list-check"
+"og:title": "roe check"
+"og:description": "Run dead-code, dupes, and health together — what a bare roe does."
+---
+
+Runs all three analyses over the same path and prints each report under its own
+section header. This is what `roe` does when you give it no command, so these
+two are the same thing:
+
+```bash
+roe [PATH]
+roe check [PATH]
+```
+
+```text
+── dead-code ───────────────────────────────────────────────
+
+src/App/Services/LegacyExporter.cs (App)
+      1:1  dead file      every declaration in this file is unused
+
+found 1 dead file · 0 unused types · 0 unused members — 3 project(s), 214 file(s), 2610 symbol(s) scanned in 74 ms
+
+── dupes ───────────────────────────────────────────────────
+
+2 occurrences (103 tokens, 23 lines)
+  src/App/Billing/PaymentService.cs:15:5-37:2
+  src/App/Shipping/ShippingService.cs:15:5-37:2
+
+found 1 duplicate group · 46 duplicated lines — 3 project(s), 214 file(s) scanned in 31 ms
+
+── health ──────────────────────────────────────────────────
+
+✓ no health issues found · 3 project(s), 214 file(s) scanned in 68 ms
+```
+
+Each section is byte-for-byte what the individual command prints, so nothing is
+summarized away.
+
+## Options
+
+| Option | Description |
+| --- | --- |
+| `PATH` | Path to the codebase root — a directory, `.sln` file, or `.csproj` file. Defaults to the current directory. |
+| `-f, --format <human\|json>` | Output format. Defaults to `human`; `json` emits the [combined document](#json-output). |
+| `--config <PATH>` | Use this `roe.json`/`roe.yaml`/`roe.yml` instead of [auto-discovery](/configuration). |
+
+Per-analysis flags — `--aggressive`, `--min-tokens`, `--max-complexity`, and the
+rest — aren't accepted here, because they mean nothing to the other two
+analyses. Set them in a [config file](/configuration), which the combined run
+reads exactly once, or run the [individual command](/commands/dead-code) when you
+want to tune one analysis for a single invocation.
+
+## Exit code
+
+The combined run exits `1` if **any** of the three analyses has findings, `0`
+only when all three are clean, and `2` on error. See
+[exit codes](/reference/exit-codes) for the full rules.
+
+```bash
+roe .            # one gate for a CI step
+```
+
+## JSON output
+
+`--format json` prints a single JSON document rather than three concatenated
+ones. Each nested field is the same v1 report the individual command emits, so
+tooling written against `roe dead-code --format json` can consume `deadCode`
+unchanged:
+
+```json
+{
+  "version": 1,
+  "root": "/path/to/solution",
+  "deadCode": { "version": 1, "root": "…", "summary": {}, "notes": [], "findings": [] },
+  "dupes": { "version": 1, "root": "…", "mode": "exact", "summary": {}, "groups": [] },
+  "health": { "version": 1, "root": "…", "summary": {}, "findings": [], "cycles": [], "hotspots": [] }
+}
+```
+
+The per-analysis schemas are documented under
+[JSON output](/reference/json-output).
+
+<Note>
+  A mistyped command name lands on the positional `PATH` — `roe dupez` fails with
+  `path not found: dupez` plus a hint pointing at `roe --help`.
+</Note>
