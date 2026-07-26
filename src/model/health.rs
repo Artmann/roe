@@ -176,9 +176,20 @@ pub struct Hotspot {
 
 #[derive(Debug, Default)]
 pub struct HealthSummary {
+    /// The three scan totals count what was *eligible to be reported*, not
+    /// what was parsed — so they narrow under `--exclude-tests` and the
+    /// config's `ignore` globs. A footer that reported the same numbers either
+    /// way could not tell a reader whether their setting took effect.
     pub projects: usize,
     pub files_scanned: usize,
     pub symbols: usize,
+    /// Test projects skipped under `--exclude-tests`, named so a reader can
+    /// also confirm their project was recognized as a test project at all.
+    /// Empty when the flag is off.
+    pub excluded_test_projects: Vec<String>,
+    /// Non-generated files dropped by an `ignore` glob, over and above the
+    /// ones already dropped with their test project.
+    pub excluded_files: usize,
     pub high_complexity: usize,
     pub high_cognitive_complexity: usize,
     pub long_methods: usize,

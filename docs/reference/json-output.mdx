@@ -148,7 +148,11 @@ including its own `version` and `root`, so anything already written against
     "largeFiles": 0,
     "largeTypes": 1,
     "circularDependencies": 1,
-    "elapsedMs": 8
+    "elapsedMs": 8,
+    "excluded": {
+      "testProjects": ["App.Tests"],
+      "ignoredFiles": 4
+    }
   },
   "findings": [
     {
@@ -197,7 +201,8 @@ including its own `version` and `root`, so anything already written against
 | --- | --- |
 | `version` | Schema version, `1`. |
 | `root` | The analysis root path. |
-| `summary` | Scan totals: `projects`, `filesScanned`, `symbols`, one count per check (`highComplexity`, `highCognitiveComplexity`, `longMethods`, `tooManyParameters`, `largeFiles`, `largeTypes`, `circularDependencies`), and `elapsedMs`. `commitsWalked` is present only when `--hotspots` was passed. |
+| `summary` | Scan totals: `projects`, `filesScanned`, `symbols`, one count per check (`highComplexity`, `highCognitiveComplexity`, `longMethods`, `tooManyParameters`, `largeFiles`, `largeTypes`, `circularDependencies`), and `elapsedMs`. `commitsWalked` is present only when `--hotspots` was passed. The three scan totals count what was eligible to be reported, so they narrow under `--exclude-tests` and the config's `ignore` globs. |
+| `summary.excluded` | What was ruled out before any check ran: `testProjects` (an array of project names, present under `--exclude-tests`) and `ignoredFiles` (a count). Omitted entirely when nothing was excluded. |
 | `findings[].kind` | `high-complexity`, `high-cognitive-complexity`, `long-method`, `too-many-parameters`, `large-file`, or `large-type` — the same names used by [inline suppressions](/suppressing-findings). |
 | `findings[].name` | Fully-qualified symbol name, or the file path for a large file. |
 | `findings[].project` | The containing project. Optional. |

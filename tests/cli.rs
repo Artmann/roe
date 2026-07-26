@@ -538,6 +538,134 @@ fn health_separates_files_with_a_blank_line_and_counts_every_kind() {
 }
 
 #[test]
+fn health_footer_names_the_test_project_it_excluded() {
+    // The issue: two runs over the same solution printed byte-identical
+    // scanned counts, so the footer couldn't confirm the flag did anything.
+    let included = roe()
+        .args(["health", &fixture("with_tests"), "--max-type-members", "0"])
+        .output()
+        .expect("command runs");
+    let included = normalize(&included.stdout);
+
+    assert!(
+        !included.contains("excluded:"),
+        "nothing was excluded, so nothing is claimed, got:\n{included}"
+    );
+
+    let excluded = roe()
+        .args([
+            "health",
+            &fixture("with_tests"),
+            "--max-type-members",
+            "0",
+            "--exclude-tests",
+        ])
+        .output()
+        .expect("command runs");
+    let excluded = normalize(&excluded.stdout);
+
+    assert!(
+        excluded.contains("excluded: 1 test project (Lib.Tests)"),
+        "the footer must name what it dropped, got:\n{excluded}"
+    );
+
+    let scanned = |report: &str| {
+        report
+            .lines()
+            .find(|line| line.contains("scanned in"))
+            .expect("a footer is printed")
+            .to_string()
+    };
+
+    assert_ne!(
+        scanned(&included),
+        scanned(&excluded),
+        "the scanned counts have to move when the flag does"
+    );
+}
+
+#[test]
+fn health_json_summary_agrees_with_the_human_footer() {
+    let output = roe()
+        .args([
+            "health",
+            &fixture("with_tests"),
+            "--format",
+            "json",
+            "--max-type-members",
+            "0",
+            "--exclude-tests",
+        ])
+        .output()
+        .expect("command runs");
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let summary = &parsed["summary"];
+
+    assert_eq!(summary["projects"], 1, "got {stdout}");
+    assert_eq!(summary["excluded"]["testProjects"][0], "Lib.Tests");
+    assert_eq!(summary["excluded"]["ignoredFiles"], 0);
+}
+
+#[test]
+fn health_ignored_files_are_subtracted_from_the_scanned_count() {
+    // The config-file case, which is the one with no command line to eyeball.
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_config_ignore"),
+            "--format",
+            "json",
+            "--max-complexity",
+            "2",
+        ])
+        .output()
+        .expect("command runs");
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let summary = &parsed["summary"];
+
+    assert_eq!(summary["filesScanned"], 1, "got {stdout}");
+    assert_eq!(summary["excluded"]["ignoredFiles"], 1);
+    assert!(
+        summary["excluded"]["testProjects"]
+            .as_array()
+            .expect("test projects array")
+            .is_empty(),
+        "no test project was excluded here, got {stdout}"
+    );
+}
+
+#[test]
+fn health_footer_counts_the_files_an_ignore_glob_dropped() {
+    // An ignored file is the other half of the footer, and the half a reader
+    // is least able to verify: no flag was typed, so the line is the only
+    // evidence the glob matched anything at all.
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_config_ignore"),
+            "--max-complexity",
+            "2",
+        ])
+        .output()
+        .expect("command runs");
+
+    let stdout = normalize(&output.stdout);
+
+    assert!(
+        stdout.contains("excluded: 1 ignored file"),
+        "the footer must count what the glob dropped, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("test project"),
+        "no test project was excluded here, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn health_ignore_globs_drop_findings_and_the_cycles_they_touch() {
     let output = roe()
         .args([

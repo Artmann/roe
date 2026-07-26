@@ -362,6 +362,56 @@ fn exclude_tests_drops_test_project_declarations_only() {
 }
 
 #[test]
+fn exclude_tests_narrows_the_scanned_counts_and_names_what_it_dropped() {
+    // The footer is the only place a reader can confirm the flag took effect,
+    // so it has to move when the flag does.
+    let scan = |thresholds| {
+        let analysis =
+            analyze(&fixture("with_tests"), thresholds).expect("analysis should succeed");
+
+        analysis.result.summary
+    };
+
+    // Absolute counts on both sides rather than "one is smaller than the
+    // other": a bug that under-counts *every* run would satisfy the
+    // comparison while getting both numbers wrong.
+    let included = scan(lenient());
+    assert!(included.excluded_test_projects.is_empty());
+    assert_eq!(included.excluded_files, 0);
+    assert_eq!(
+        (included.projects, included.files_scanned),
+        (2, 3),
+        "with nothing excluded the fixture's own two projects and three files \
+         are all in scope"
+    );
+
+    let mut thresholds = lenient();
+    thresholds.exclude_tests = true;
+    let excluded = scan(thresholds);
+
+    assert_eq!(
+        excluded.excluded_test_projects,
+        vec!["Lib.Tests".to_string()],
+        "naming the project answers 'was it even detected as a test project?'"
+    );
+    assert_eq!(
+        (excluded.projects, excluded.files_scanned),
+        (1, 2),
+        "the flag drops Lib.Tests and its one file, and nothing else"
+    );
+    assert!(
+        excluded.symbols < included.symbols,
+        "{} symbols vs {}",
+        excluded.symbols,
+        included.symbols
+    );
+    assert!(
+        excluded.symbols > 0,
+        "Lib's own declarations are still in scope"
+    );
+}
+
+#[test]
 fn a_partial_type_with_a_generated_half_is_never_flagged() {
     // Partial declarations merge into one symbol and their flags merge with
     // them, so a designer file marks the whole type as generated. That is the

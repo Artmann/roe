@@ -3,7 +3,9 @@ use std::path::Path;
 use colored::{ColoredString, Colorize};
 
 use crate::cli::HealthSort;
-use crate::model::{CircularDependency, HealthFinding, HealthFindingKind, HealthResult, Workspace};
+use crate::model::{
+    CircularDependency, HealthFinding, HealthFindingKind, HealthResult, HealthSummary, Workspace,
+};
 
 /// Every check one declaration tripped, printed as a single entry.
 ///
@@ -50,6 +52,7 @@ pub fn print(result: &HealthResult, workspace: &Workspace, sort: HealthSort, lim
             result.summary.files_scanned,
             result.summary.elapsed_ms
         );
+        print_exclusions(&result.summary);
         print_hotspots(result, workspace);
         return;
     }
@@ -140,6 +143,47 @@ pub fn print(result: &HealthResult, workspace: &Workspace, sort: HealthSort, lim
         pluralize(s.large_types, "large type"),
         pluralize_dependencies(s.circular_dependencies),
     );
+    print_exclusions(s);
+}
+
+/// What the run ruled out before any check could reach it.
+///
+/// Printed only when something actually was: a run with nothing excluded says
+/// nothing, so the line's presence is itself the confirmation that a setting
+/// took effect. That matters most when the setting came from a config file,
+/// where there is no command line to eyeball.
+fn print_exclusions(summary: &HealthSummary) {
+    let mut parts = Vec::new();
+
+    if !summary.excluded_test_projects.is_empty() {
+        parts.push(format!(
+            "{} ({})",
+            pluralize(summary.excluded_test_projects.len(), "test project"),
+            name_projects(&summary.excluded_test_projects)
+        ));
+    }
+
+    if summary.excluded_files > 0 {
+        parts.push(pluralize(summary.excluded_files, "ignored file"));
+    }
+
+    if parts.is_empty() {
+        return;
+    }
+
+    println!("  {}", format!("excluded: {}", parts.join(", ")).dimmed());
+}
+
+/// Naming the projects answers the question a reader is really asking — "was
+/// my project even detected as a test project?" — but a solution with twenty
+/// of them must not push the findings off the screen, so the list stops at
+/// three.
+fn name_projects(names: &[String]) -> String {
+    if names.len() <= 3 {
+        return names.join(", ");
+    }
+
+    format!("{}, +{} more", names[..3].join(", "), names.len() - 3)
 }
 
 /// Fold the flat finding list into files and, within them, declarations.
@@ -439,6 +483,25 @@ mod tests {
             threshold,
             breakdown: None,
         }
+    }
+
+    #[test]
+    fn a_handful_of_excluded_projects_are_all_named() {
+        let names = ["Api.Tests".to_string(), "Lib.Tests".to_string()];
+
+        assert_eq!(name_projects(&names), "Api.Tests, Lib.Tests");
+    }
+
+    #[test]
+    fn a_long_list_of_excluded_projects_is_truncated() {
+        // A solution with twenty test projects must not push the findings off
+        // the screen.
+        let names: Vec<String> = (1..=6).map(|index| format!("P{index}.Tests")).collect();
+
+        assert_eq!(
+            name_projects(&names),
+            "P1.Tests, P2.Tests, P3.Tests, +3 more"
+        );
     }
 
     /// One printed group: its position, the declaration it names, and how many

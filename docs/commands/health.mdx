@@ -52,7 +52,7 @@ it sits. The worst offenders come first.
 | `--max-parameters <N>` | Flag methods, operators, and indexers declared with more than this many parameters. Defaults to `5`. |
 | `--max-file-lines <N>` | Flag files longer than this many lines. Defaults to `750`. |
 | `--max-type-members <N>` | Flag types with more than this many members. Defaults to `20`. |
-| `--exclude-tests` | Skip test projects, including any circular dependency that touches one. Off by default. |
+| `--exclude-tests` | Skip test projects, including any circular dependency that touches one. Off by default. Excluded projects are subtracted from the scanned counts and named on the footer, so you can confirm the flag took effect — see [What "scanned" counts](#what-scanned-counts). |
 | `--sort <severity\|path>` | Order findings by how far past their threshold they sit, or by file path. Defaults to `severity`. |
 | `--limit <N>` | Print at most this many findings; `0` prints all of them. Defaults to `0`. |
 | `--hotspots` | Also rank files that are both complex and frequently changed, read from git history. |
@@ -106,6 +106,37 @@ or a `??` whose fallback contains a ternary is counted on its own merits.
   `&&` and `||` are unchanged and still cost one point each — that's McCabe's
   definition, and unlike `??` they genuinely add a path a test has to cover.
   Cognitive complexity continues to collapse a run of them to a single point.
+</Note>
+
+### What "scanned" counts
+
+The footer's `N project(s), N file(s), N symbol(s) scanned` counts what was
+*eligible to be reported*, not what was parsed. Anything ruled out up front —
+test projects under `--exclude-tests`, files matched by the config's
+[`ignore` globs](/configuration) — is subtracted, and named on a line of its
+own:
+
+```text
+found 8 issues across 7 locations in 6 files — 2 project(s), 118 file(s), 1204 symbol(s) scanned in 153 ms
+  2 complex methods · 0 hard-to-follow methods · 1 long method · 3 over-parameterized methods · 0 large files · 2 large types · 0 circular dependencies
+  excluded: 1 test project (Lib.Tests), 4 ignored files
+```
+
+The `excluded:` line only appears when something was actually excluded, so a
+plain run is unchanged. Up to three project names are listed; past that the
+line says `+N more`.
+
+This matters most when the exclusion comes from a
+[config file](/configuration), where there is no command line to eyeball:
+`health.excludeTests: true` is otherwise invisible, and the footer is the one
+place a reader can confirm both that the setting was picked up *and* that
+their test project was recognized as one.
+
+<Note>
+  Generated files are not reported as an exclusion. They are never eligible
+  for any check, under any setting, so there is no setting for a reader to
+  confirm — unlike `--exclude-tests` and `ignore`, which are choices that can
+  silently fail to apply.
 </Note>
 
 ### Sorting and severity

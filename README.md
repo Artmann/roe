@@ -250,6 +250,20 @@ asking.
 Declarations in generated files are never flagged, and the same `ignore`
 globs from a config file apply here too.
 
+The footer counts what was *eligible to be reported*, so both `--exclude-tests`
+and `ignore` narrow it, and whatever they ruled out is named on a line of its
+own:
+
+```
+found 8 issues across 7 locations in 6 files — 2 project(s), 118 file(s), 1204 symbol(s) scanned in 153 ms
+  2 complex methods · 0 hard-to-follow methods · 1 long method · 3 over-parameterized methods · 0 large files · 2 large types · 0 circular dependencies
+  excluded: 1 test project (Lib.Tests), 4 ignored files
+```
+
+That line only appears when something was excluded. It's what tells you a
+setting took effect — which matters most when it came from a config file,
+where there's no command line to eyeball.
+
 #### What it checks, and what to do about it
 
 | Check | What it measures | Typical fix |

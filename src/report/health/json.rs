@@ -30,6 +30,19 @@ struct JsonSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     commits_walked: Option<usize>,
     elapsed_ms: u128,
+    /// Omitted when nothing was excluded, so a plain run's summary is
+    /// unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    excluded: Option<JsonExcluded>,
+}
+
+/// What was ruled out before any check ran. The counts above are narrowed by
+/// exactly this, so a consumer can reconcile the two.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonExcluded {
+    test_projects: Vec<String>,
+    ignored_files: usize,
 }
 
 #[derive(Serialize)]
@@ -84,6 +97,22 @@ struct JsonHotspot {
     complexity_density: f64,
 }
 
+/// `None` when nothing was excluded — an all-zero object would read as a claim
+/// that something was, and the v1 summary is unchanged for runs that exclude
+/// nothing.
+fn build_excluded(result: &HealthResult) -> Option<JsonExcluded> {
+    let summary = &result.summary;
+
+    if summary.excluded_test_projects.is_empty() && summary.excluded_files == 0 {
+        return None;
+    }
+
+    Some(JsonExcluded {
+        test_projects: summary.excluded_test_projects.clone(),
+        ignored_files: summary.excluded_files,
+    })
+}
+
 pub fn print(result: &HealthResult, workspace: &Workspace) {
     let report = build(result, workspace);
 
@@ -112,6 +141,7 @@ pub(crate) fn build(result: &HealthResult, workspace: &Workspace) -> JsonReport 
             circular_dependencies: result.summary.circular_dependencies,
             commits_walked: result.summary.commits_walked,
             elapsed_ms: result.summary.elapsed_ms,
+            excluded: build_excluded(result),
         },
         findings: result
             .findings

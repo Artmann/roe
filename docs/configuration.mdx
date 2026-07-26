@@ -96,3 +96,8 @@ Health thresholds work the same way, per field: `--max-complexity 12`
 overrides `"maxComplexity"` for that run, while every threshold you don't
 pass still comes from the config. Like `--aggressive`, `--exclude-tests` can
 only turn the setting on.
+
+To confirm a config-only `excludeTests` or `ignore` actually applied, read the
+`roe health` footer: the scanned counts narrow by whatever was excluded, and
+an `excluded:` line names it. See
+[What "scanned" counts](/commands/health#what-scanned-counts).
