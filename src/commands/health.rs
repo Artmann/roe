@@ -141,6 +141,8 @@ fn analyze_inner(
         &resolution,
         &result.findings,
         &result.cycles,
+        thresholds,
+        ignore_set.as_ref(),
         start.elapsed(),
     );
     result.summary.commits_walked = commits_walked;
@@ -511,23 +513,68 @@ fn project_name(workspace: &Workspace, project: Option<ProjectId>) -> Option<Str
     project.map(|id| workspace.projects[id.index()].name.clone())
 }
 
+/// The scan totals count what was *eligible to be reported*, not what was
+/// parsed: a run that skipped a whole test project and still claimed to have
+/// scanned it left the reader with no way to confirm their setting applied.
+/// Whatever was ruled out is counted separately so the report can name it.
 fn summarize(
     workspace: &Workspace,
     resolution: &Resolution,
     findings: &[HealthFinding],
     cycles: &[CircularDependency],
+    thresholds: Thresholds,
+    ignore: Option<&GlobSet>,
     elapsed: Duration,
 ) -> HealthSummary {
     let count = |kind: HealthFindingKind| findings.iter().filter(|f| f.kind == kind).count();
 
+    // Indexed by raw `FileId`, so the symbol pass can reuse it rather than
+    // re-matching every glob.
+    let mut eligible = Vec::with_capacity(workspace.files.len());
+    let mut excluded_files = 0;
+
+    for file in &workspace.files {
+        let in_excluded_test = thresholds.exclude_tests && in_test_project(workspace, file.project);
+        let is_ignored = ignore.is_some_and(|set| set.is_match(&file.path));
+
+        // Generated files were never eligible under any setting, so counting
+        // them here would report an exclusion the user did not choose. Files
+        // already dropped with their test project are reported as that
+        // project, not twice.
+        if is_ignored && !in_excluded_test && !file.is_generated {
+            excluded_files += 1;
+        }
+
+        eligible.push(!in_excluded_test && !is_ignored);
+    }
+
+    let mut excluded_test_projects: Vec<String> = if thresholds.exclude_tests {
+        workspace
+            .projects
+            .iter()
+            .filter(|project| project.is_test())
+            .map(|project| project.name.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    excluded_test_projects.sort();
+
     HealthSummary {
-        projects: workspace.projects.len(),
+        projects: workspace.projects.len() - excluded_test_projects.len(),
         files_scanned: workspace
             .files
             .iter()
-            .filter(|file| !file.is_generated)
+            .zip(&eligible)
+            .filter(|(file, is_eligible)| **is_eligible && !file.is_generated)
             .count(),
-        symbols: resolution.symbols.len(),
+        symbols: resolution
+            .symbols
+            .iter()
+            .filter(|symbol| eligible[symbol.file.index()])
+            .count(),
+        excluded_test_projects,
+        excluded_files,
         high_complexity: count(HealthFindingKind::HighComplexity),
         high_cognitive_complexity: count(HealthFindingKind::HighCognitiveComplexity),
         long_methods: count(HealthFindingKind::LongMethod),
