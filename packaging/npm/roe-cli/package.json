@@ -1,9 +1,11 @@
 {
   "name": "roe-cli",
   "version": "0.0.0",
-  "description": "Codebase intelligence for C# — dead code and duplicate detection",
+  "description": "Codebase intelligence for C# — dead code, duplicate, and health checks",
   "keywords": [
     "cli",
+    "code-quality",
+    "complexity",
     "csharp",
     "dead-code",
     "duplicates",

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Codebase intelligence for C# — dead code and duplicate detection.</Description>
+    <Description>Codebase intelligence for C# — dead code, duplicate, and health checks.</Description>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
     <Nullable>enable</Nullable>
@@ -11,7 +11,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/Artmann/roe</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>csharp;dead-code;duplicates;static-analysis</PackageTags>
+    <PackageTags>code-quality;complexity;csharp;dead-code;duplicates;static-analysis</PackageTags>
     <RepositoryUrl>https://github.com/Artmann/roe</RepositoryUrl>
     <RollForward>LatestMajor</RollForward>
     <RootNamespace>Roe.Tool</RootNamespace>

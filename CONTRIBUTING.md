@@ -10,6 +10,7 @@ cargo test                 # unit + integration + snapshot tests
 cargo clippy --all-targets
 cargo run -- dead-code tests/fixtures/console_app
 cargo run -- dupes tests/fixtures/dupes_exact_clone
+cargo run -- health tests/fixtures/health_metrics
 ```
 
 Fixtures under `tests/fixtures/` are miniature solutions pinning the
@@ -93,6 +94,49 @@ code style guide.
    occurrences), and `--min-occurrences`.
 4. **Report** — surviving groups are sorted by size (tokens, then occurrence
    count) so the most impactful duplication surfaces first.
+
+### `roe health`
+
+1. **Discover, extract, resolve** — the same first three stages as
+   `dead-code`, reusing `resolve::build_symbols` and `graph::build_graph`.
+   Then it diverges: there is no mark-and-sweep. Health flags issues in code
+   regardless of whether it's reachable, since a method being used is what
+   makes its complexity worth fixing.
+2. **Measure** — per declaration, during the tree-sitter walk
+   (`extract::walk`). `compute_member_complexity` returns cyclomatic
+   complexity (McCabe's `1 + decision points`: one per `if`, loop, `catch`,
+   `switch` section, ternary, and `&&`/`||`/`??`), cognitive complexity, and
+   body line span. `count_cognitive` implements Campbell's 2018 SonarSource
+   formulation, where a flow breaker costs `1 + nesting` so deeply nested
+   code scores worse than the same branches laid flat, while shapes the eye
+   reads at a glance are forgiven — an `else if` chain stays flat and a run of
+   `&&` counts once. Type size comes from `MemberBreakdown::record`, which
+   buckets constructors, operators, and indexers into `methods` and refuses
+   enum cases outright.
+3. **Threshold** — `collect_findings` emits a finding where a metric is
+   strictly greater than its limit, so a value equal to the threshold is
+   still clean. `HealthFinding::severity` is `metric / threshold`, which is
+   what lets a cyclomatic complexity of 46 against a limit of 10 be ranked
+   against a 242-line body against a limit of 40.
+4. **Couple** — `coupling::fan_out` rolls the symbol-level reference graph up
+   to type-level edges, dropping self-references. `find_cycles` runs Tarjan's
+   SCC over that, keeping components of two or more. Because a strongly
+   connected component is not itself a cycle, `shortest_cycle` then BFSes
+   within each component to a path where every consecutive pair is a real
+   edge, and the members not on that path ride along in `Cycle::others`
+   rather than being spliced into the arrow chain. Nodes and neighbors are
+   sorted at every stage, so the output is deterministic run to run.
+5. **Rank hotspots** (only with `--hotspots`) — `churn::analyze` walks git
+   history with gix, diffing first parents only so a squashed pull request
+   counts once, and discounts each commit on an exponential decay with a
+   90-day half-life. `hotspot::rank` multiplies that by complexity density
+   (cyclomatic over lines, so long-but-simple files don't crowd out
+   short-but-gnarly ones) and normalizes both terms within the run.
+
+Cycles are the one finding with no inline suppression — they span files, so
+there's no single line to attach a comment to. A cycle touching a generated
+file, or a test project under `--exclude-tests`, is dropped whole for the same
+reason: a path with a hole in it would name edges that don't exist.
 
 ## Releasing
 

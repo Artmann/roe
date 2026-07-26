@@ -1,13 +1,15 @@
 # roe
 
 Codebase intelligence for C#. Finds dead code — unused types, members, and
-files — and duplicated code across your solution. Static analysis only; roe
-never runs the code it analyzes.
+files — duplicated code, and complexity/coupling hotspots, so you can delete
+what's unused, de-duplicate what's copy-pasted, and clean up what's hard to
+work with. Static analysis only; roe never runs the code it analyzes.
 
 ```
 npm install --global roe-cli
 roe dead-code path/to/solution
 roe dupes path/to/solution
+roe health path/to/solution
 ```
 
 Or run it one-shot without installing:

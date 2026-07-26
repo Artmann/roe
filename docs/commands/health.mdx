@@ -74,7 +74,10 @@ than repeating six flags on each invocation.
 | Circular dependency | Two or more types that reference each other in a cycle. Has no threshold and can't be turned off. |
 
 Generated files are excluded from every check, as are files matched by the
-config's [`ignore` globs](/configuration).
+config's [`ignore` globs](/configuration). A circular dependency that touches
+a generated type is dropped whole rather than reported with that type left
+out — like `--exclude-tests`, since a path with a hole in it would name edges
+that aren't there.
 
 ### Sorting and severity
 
