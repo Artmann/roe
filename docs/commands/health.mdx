@@ -67,7 +67,7 @@ than repeating six flags on each invocation.
 
 | Check | Flags |
 | --- | --- |
-| Complex method | A method or property whose cyclomatic complexity — the number of independent paths through it — exceeds `--max-complexity`. |
+| Complex method | A method or property whose cyclomatic complexity — the number of independent paths through it — exceeds `--max-complexity`. One point per `if`, loop, `catch`, `switch` arm, ternary, and `&&`/`\|\|`, plus one baseline. |
 | Hard-to-follow method | A method or property whose cognitive complexity exceeds `--max-cognitive`. Like cyclomatic, but weighted by nesting depth, so deeply nested code scores worse than the same number of flat branches. |
 | Long method | A method or property whose body spans more than `--max-method-lines` lines. |
 | Over-parameterized method | A method, operator, or indexer with more than `--max-parameters` parameters. |
@@ -80,6 +80,33 @@ config's [`ignore` globs](/configuration). A circular dependency that touches
 a generated type is dropped whole rather than reported with that type left
 out — like `--exclude-tests`, since a path with a hole in it would name edges
 that aren't there.
+
+### `??` is not a branch
+
+The null-coalescing operator doesn't count towards cyclomatic complexity.
+It's a defaulting idiom, not control flow the reader has to trace — nobody
+writes a second test case for the null side of `name ?? "anonymous"`. Counting
+it made hand-rolled `with`-style methods score wildly:
+
+```csharp
+public Unit Copy(string? name = null, int? hp = null, /* … */)
+    => new(name ?? Name, hp ?? Hp, /* …eleven more… */);
+```
+
+That used to score cyclomatic 14 against a limit of 10 while cognitive
+complexity — the metric that actually models comprehension — scored it 0.
+Now both agree it's trivial.
+
+Any real branching hidden behind a `??` still shows up: the right-hand side is
+walked like any other expression, so `Load() ?? throw new InvalidOperationException()`
+or a `??` whose fallback contains a ternary is counted on its own merits.
+`??=` never counted, since the grammar treats it as an assignment.
+
+<Note>
+  `&&` and `||` are unchanged and still cost one point each — that's McCabe's
+  definition, and unlike `??` they genuinely add a path a test has to cover.
+  Cognitive complexity continues to collapse a run of them to a single point.
+</Note>
 
 ### Sorting and severity
 

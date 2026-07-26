@@ -858,10 +858,20 @@ fn compute_member_complexity(node: Node, kind: MemberKind) -> (u32, u32, u32) {
 
 /// Decision points within a body: branches (`if`/`for`/`foreach`/`while`/
 /// `do`/`catch`/ternary/switch branches) and short-circuiting boolean
-/// operators (`&&`/`||`/`??`), each adding one path through the method. The
+/// operators (`&&`/`||`), each adding one path through the method. The
 /// grammar starts a new `switch_section` at every `case`/`default` label
 /// (even label-only fallthroughs with no statements of their own), so each
 /// label counts as its own branch.
+///
+/// `??` is deliberately absent. It is a defaulting idiom, not control flow the
+/// reader traces — nobody writes a second test for the null side of
+/// `name ?? "anonymous"` — and charging for it scored a hand-rolled `with`
+/// method with thirteen defaulted fields at 14 while `count_cognitive`, which
+/// has always ignored it, scored the same method 0. Real branching hidden
+/// behind one still counts: the right-hand side is walked like any other
+/// expression, so a ternary or a lambda in the fallback is charged on its own
+/// merits. `??=` is an `assignment_expression` rather than a
+/// `binary_expression`, so it never reached this match to begin with.
 fn count_decision_points(node: Node) -> u32 {
     let mut count = match node.kind() {
         "if_statement"
@@ -874,7 +884,7 @@ fn count_decision_points(node: Node) -> u32 {
         | "switch_section"
         | "switch_expression_arm" => 1,
         "binary_expression" => match node.child_by_field_name("operator") {
-            Some(op) if matches!(op.kind(), "&&" | "||" | "??") => 1,
+            Some(op) if matches!(op.kind(), "&&" | "||") => 1,
             _ => 0,
         },
         _ => 0,
@@ -904,8 +914,8 @@ fn count_decision_points(node: Node) -> u32 {
 ///
 /// Two deliberate departures from the spec: recursion is not counted (it
 /// would need name resolution the extractor does not have here), and `??` is
-/// not treated as a boolean operator (`count_decision_points` still counts
-/// it for cyclomatic).
+/// not treated as a boolean operator. `count_decision_points` agrees on the
+/// latter, so the two metrics no longer disagree about defaulting.
 fn count_cognitive(node: Node, nesting: u32) -> u32 {
     match node.kind() {
         // Handled as a chain so `else if` does not nest.
@@ -1503,8 +1513,122 @@ class C
 }
 "#,
         );
-        // baseline 1 + && + || + && + ?? = 5
-        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 5);
+        // baseline 1 + && + || + && = 4. The `??` is not a decision point.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 4);
+    }
+
+    #[test]
+    fn null_coalescing_is_not_a_decision_point() {
+        // A hand-rolled `with`: thirteen defaulted fields, no branching a
+        // reader has to trace. Counting each `??` scored this 14 against a
+        // limit of 10 while cognitive complexity correctly scored it 0.
+        let (facts, rodeo) = extract(
+            r#"
+class Unit
+{
+    public Unit Copy(string? a1 = null, string? a2 = null, string? a3 = null,
+                     string? a4 = null, string? a5 = null, string? a6 = null,
+                     string? a7 = null, string? a8 = null, string? a9 = null,
+                     string? a10 = null, string? a11 = null, string? a12 = null,
+                     string? a13 = null)
+    {
+        return new Unit(a1 ?? A1, a2 ?? A2, a3 ?? A3, a4 ?? A4, a5 ?? A5,
+                        a6 ?? A6, a7 ?? A7, a8 ?? A8, a9 ?? A9, a10 ?? A10,
+                        a11 ?? A11, a12 ?? A12, a13 ?? A13);
+    }
+}
+"#,
+        );
+        let copy = decl_named(&facts, &rodeo, "Copy");
+        assert_eq!(copy.cyclomatic, 1);
+        assert_eq!(copy.cognitive, 0);
+    }
+
+    #[test]
+    fn a_chain_of_null_coalescing_is_still_one() {
+        // Sibling `??`s in an argument list are what the issue reported, but a
+        // left-associative chain has to come out at 1 as well.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    string M(string? a, string? b, string c) => a ?? b ?? c;
+}
+"#,
+        );
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 1);
+    }
+
+    #[test]
+    fn dropping_null_coalescing_leaves_the_boolean_operators_alone() {
+        // `&&` and `||` are McCabe decision points and stay that way; only
+        // `??` was ever the false positive.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    bool M(bool a, bool b, string? s, string fallback)
+    {
+        return a && b && (s ?? fallback).Length > 0;
+    }
+}
+"#,
+        );
+        // baseline 1 + two `&&` = 3.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 3);
+    }
+
+    #[test]
+    fn a_throwing_null_coalescing_fallback_is_not_charged_for_the_operator() {
+        // The deliberate trade-off, pinned rather than left to be discovered:
+        // `?? throw` really is a branch, but roe cannot tell it apart from
+        // `?? "default"` without evaluating the right-hand side, and the
+        // defaulting case is overwhelmingly the common one.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    string M(string? s) => s ?? throw new InvalidOperationException();
+}
+"#,
+        );
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 1);
+    }
+
+    #[test]
+    fn branching_inside_a_null_coalescing_fallback_is_still_counted() {
+        // Dropping the operator must not drop the expression: the fallback is
+        // walked like any other, so a ternary hiding in it still costs.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    string M(string? s, bool flag) => s ?? (flag ? "yes" : "no");
+}
+"#,
+        );
+        // baseline 1 + the ternary = 2.
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 2);
+    }
+
+    #[test]
+    fn null_coalescing_assignment_never_counted_either() {
+        // `??=` parses as an `assignment_expression`, not a
+        // `binary_expression`, so it was never a decision point. Pinned so
+        // nobody "fixes" the asymmetry back into existence.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    string M(string? s, string fallback)
+    {
+        s ??= fallback;
+        return s;
+    }
+}
+"#,
+        );
+        assert_eq!(decl_named(&facts, &rodeo, "M").cyclomatic, 1);
     }
 
     #[test]
