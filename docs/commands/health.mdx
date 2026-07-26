@@ -121,6 +121,14 @@ judge:
 Enum cases don't count towards a type's size. An enum's cases are its whole
 point, and counting them would report a 25-case enum as a god class.
 
+`const` fields don't count either, for the same reason: a `const` has no
+behaviour and no state at runtime — it's a name for a literal, inlined at
+every call site — so it can't be part of the cohesion problem this check
+looks for. A class holding fifty tuning constants is a lookup table, not a god
+class. `static readonly` fields *do* still count: roe has no type analysis, so
+it can't tell a `static readonly float` tuning value from a `static readonly
+HttpClient` that the type genuinely depends on.
+
 ### Overloads
 
 Overloads share a name, so two flagged rows could otherwise be
