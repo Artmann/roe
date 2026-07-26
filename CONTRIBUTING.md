@@ -106,8 +106,11 @@ code style guide.
 2. **Measure** — per declaration, during the tree-sitter walk
    (`extract::walk`). `compute_member_complexity` returns cyclomatic
    complexity (McCabe's `1 + decision points`: one per `if`, loop, `catch`,
-   `switch` section, ternary, and `&&`/`||`/`??`), cognitive complexity, and
-   body line span. `count_cognitive` implements Campbell's 2018 SonarSource
+   `switch` section, ternary, and `&&`/`||`), cognitive complexity, and
+   body line span. `??` is deliberately not a decision point — it is a
+   defaulting idiom rather than a path a test covers, and counting it scored
+   hand-rolled `with` methods at 14 while cognitive complexity scored them 0.
+   `count_cognitive` implements Campbell's 2018 SonarSource
    formulation, where a flow breaker costs `1 + nesting` so deeply nested
    code scores worse than the same branches laid flat, while shapes the eye
    reads at a glance are forgiven — an `else if` chain stays flat and a run of
