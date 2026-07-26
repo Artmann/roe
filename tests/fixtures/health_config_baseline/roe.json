@@ -1,0 +1,6 @@
+{
+  "health": {
+    "maxComplexity": 2,
+    "baseline": "roe-baseline.json"
+  }
+}

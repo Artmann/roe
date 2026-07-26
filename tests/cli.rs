@@ -773,6 +773,193 @@ fn health_ignore_globs_drop_findings_and_the_cycles_they_touch() {
     );
 }
 
+/// A writable path for a baseline the test owns. `CARGO_TARGET_TMPDIR` is
+/// per-crate and cleaned by `cargo clean`, so nothing leaks into the fixtures.
+fn scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("cli-baselines");
+    std::fs::create_dir_all(&dir).expect("the scratch directory is writable");
+
+    dir.join(name)
+}
+
+#[test]
+fn health_write_baseline_records_the_run_and_exits_0() {
+    let path = scratch("written.json");
+    let mut args = health_metrics_args();
+    args.extend(["--write-baseline".to_string(), path.display().to_string()]);
+
+    let output = roe().args(&args).output().expect("command runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "recording a codebase is not judging it, got {stderr}"
+    );
+    assert!(
+        stderr.contains("wrote 4 finding(s) and 1 cycle(s) to "),
+        "the write says what it recorded, got {stderr}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).is_empty(),
+        "no report is printed alongside the write"
+    );
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("the baseline exists"))
+            .expect("valid JSON");
+    assert_eq!(written["version"], 1);
+    assert_eq!(
+        written["findings"][0]["kind"], "high-complexity",
+        "entries are sorted by kind, got {written}"
+    );
+}
+
+#[test]
+fn health_baseline_reports_only_what_it_does_not_cover() {
+    let path = scratch("gate.json");
+    let mut write = health_metrics_args();
+    write.extend(["--write-baseline".to_string(), path.display().to_string()]);
+    roe().args(&write).output().expect("command runs");
+
+    let mut gate = health_metrics_args();
+    gate.extend(["--baseline".to_string(), path.display().to_string()]);
+
+    let clean = roe().args(&gate).output().expect("command runs");
+    let stdout = String::from_utf8_lossy(&clean.stdout);
+    assert_eq!(
+        clean.status.code(),
+        Some(0),
+        "known debt does not fail the build, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("5 baselined finding(s) hidden"),
+        "hidden findings are never silently gone, got:\n{stdout}"
+    );
+
+    // A tighter limit stands in for new code.
+    gate.extend(["--max-method-lines".to_string(), "5".to_string()]);
+
+    let regressed = roe().args(&gate).output().expect("command runs");
+    let stdout = String::from_utf8_lossy(&regressed.stdout);
+    assert_eq!(regressed.status.code(), Some(1));
+    assert!(
+        stdout.contains("found 1 issue across 1 location in 1 file"),
+        "only the new finding is reported, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("5 baselined finding(s) hidden"),
+        "and the rest are still accounted for, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn health_json_summary_reports_what_the_baseline_hid() {
+    let path = scratch("json-summary.json");
+    let mut write = health_metrics_args();
+    write.extend(["--write-baseline".to_string(), path.display().to_string()]);
+    roe().args(&write).output().expect("command runs");
+
+    let mut gate = health_metrics_args();
+    gate.extend([
+        "--baseline".to_string(),
+        path.display().to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+    ]);
+
+    let output = roe().args(&gate).output().expect("command runs");
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(parsed["summary"]["baselined"], 5, "got {stdout}");
+    assert!(
+        parsed["findings"]
+            .as_array()
+            .expect("findings array")
+            .is_empty(),
+        "got {stdout}"
+    );
+}
+
+#[test]
+fn health_without_a_baseline_says_nothing_about_one() {
+    let output = roe()
+        .args(health_metrics_args())
+        .output()
+        .expect("command runs");
+    let stdout = normalize(&output.stdout);
+
+    assert!(
+        !stdout.contains("baselined"),
+        "a run with no baseline stays quiet about them, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn health_reads_a_baseline_named_by_the_config() {
+    // The config path is what makes a bare `roe` honour a baseline too, and
+    // it resolves against the config file's own directory rather than the cwd.
+    let output = roe()
+        .args(["health", &fixture("health_config_baseline")])
+        .output()
+        .expect("command runs");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "got:\n{stdout}");
+    assert!(
+        stdout.contains("Lib.Widget.New"),
+        "the unrecorded finding is reported, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Lib.Widget.Known"),
+        "the recorded one is not, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("1 baselined finding(s) hidden"),
+        "got:\n{stdout}"
+    );
+}
+
+#[test]
+fn health_missing_baseline_exits_2_and_says_how_to_create_one() {
+    let mut args = health_metrics_args();
+    args.extend([
+        "--baseline".to_string(),
+        "does/not/exist/roe-baseline.json".to_string(),
+    ]);
+
+    let output = roe().args(&args).output().expect("command runs");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr.contains(
+            "error: baseline file not found: does/not/exist/roe-baseline.json — create one with `roe health --write-baseline does/not/exist/roe-baseline.json`"
+        ),
+        "got {stderr}"
+    );
+}
+
+#[test]
+fn health_refuses_to_write_a_baseline_through_a_baseline() {
+    let mut args = health_metrics_args();
+    args.extend([
+        "--baseline".to_string(),
+        "a.json".to_string(),
+        "--write-baseline".to_string(),
+        "b.json".to_string(),
+    ]);
+
+    let output = roe().args(&args).output().expect("command runs");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot be used with"),
+        "writing a filtered picture of the codebase is never what was meant"
+    );
+}
+
 #[test]
 fn health_invalid_path_exits_2() {
     let output = roe()

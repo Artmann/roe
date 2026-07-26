@@ -34,7 +34,8 @@ error.
     "maxParameters": 6,
     "maxFileLines": 750,
     "maxTypeMembers": 25,
-    "excludeTests": true
+    "excludeTests": true,
+    "baseline": "roe-baseline.json"
   }
 }
 ```
@@ -45,7 +46,7 @@ error.
 | `roots` | string[] | Fully-qualified symbol names to treat as extra entry-point roots. Default for `--root`. |
 | `libraryProjects` | string[] | Project names to always treat in library mode (public API counts as used). Default for `--library`. |
 | `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to all three commands. |
-| `health` | object | Thresholds for [`roe health`](/commands/health). Every key is optional. |
+| `health` | object | Thresholds and the baseline path for [`roe health`](/commands/health). Every key is optional. |
 
 Unknown fields are rejected, so a typo fails loudly instead of being
 silently ignored.
@@ -64,9 +65,19 @@ Every field under `health` is optional and corresponds to a flag on
 | `maxFileLines` | number | `--max-file-lines` | `750` |
 | `maxTypeMembers` | number | `--max-type-members` | `20` |
 | `excludeTests` | boolean | `--exclude-tests` | `false` |
+| `baseline` | string | `--baseline` | none |
 
 Committing these is usually better than passing six flags on every CI
 invocation, and it keeps local runs and CI in agreement.
+
+`baseline` names a [baseline file](/commands/health#baselines) and is
+resolved relative to the config file's own directory, the way `ignore` globs
+are — so `"roe-baseline.json"` means the one sitting next to `roe.json`, no
+matter which subdirectory the run starts in. Setting it here rather than
+passing `--baseline` is also what makes a bare `roe` and
+[`roe check`](/commands/check) honour it, since neither takes health flags of
+its own. A path that doesn't exist is a hard error, not a silent
+full-backlog run.
 
 ## Ignore globs
 

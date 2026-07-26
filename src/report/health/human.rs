@@ -53,6 +53,7 @@ pub fn print(result: &HealthResult, workspace: &Workspace, sort: HealthSort, lim
             result.summary.elapsed_ms
         );
         print_exclusions(&result.summary);
+        print_baselined(result);
         print_hotspots(result, workspace);
         return;
     }
@@ -144,6 +145,7 @@ pub fn print(result: &HealthResult, workspace: &Workspace, sort: HealthSort, lim
         pluralize_dependencies(s.circular_dependencies),
     );
     print_exclusions(s);
+    print_baselined(result);
 }
 
 /// What the run ruled out before any check could reach it.
@@ -184,6 +186,20 @@ fn name_projects(names: &[String]) -> String {
     }
 
     format!("{}, +{} more", names[..3].join(", "), names.len() - 3)
+}
+
+/// What a baseline kept out of the report, printed whenever one was in force
+/// — including when it hid nothing, since "the gate is on and the codebase
+/// has caught up with it" is exactly what a reader wants confirmed.
+fn print_baselined(result: &HealthResult) {
+    let Some(baselined) = result.summary.baselined else {
+        return;
+    };
+
+    println!(
+        "  {}",
+        format!("{baselined} baselined finding(s) hidden").dimmed()
+    );
 }
 
 /// Fold the flat finding list into files and, within them, declarations.

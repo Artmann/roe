@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "findings": [
+    {
+      "kind": "high-complexity",
+      "name": "Lib.Widget.Known",
+      "file": "Lib/Widget.cs",
+      "metric": 3
+    }
+  ],
+  "cycles": []
+}

@@ -172,6 +172,17 @@ pub struct HealthArgs {
     #[arg(long, default_value_t = 10, requires = "hotspots")]
     pub top: usize,
 
+    /// Report only findings that this baseline file doesn't already record,
+    /// so CI can gate on new debt in a codebase that already has some
+    #[arg(long, value_name = "PATH")]
+    pub baseline: Option<PathBuf>,
+
+    /// Record every current finding to this path and exit 0, printing no
+    /// report. Writing through `--baseline` would record a filtered picture
+    /// of the codebase, so the two conflict
+    #[arg(long, value_name = "PATH", conflicts_with = "baseline")]
+    pub write_baseline: Option<PathBuf>,
+
     /// Path to an explicit roe.json/roe.yaml/roe.yml config (skips
     /// auto-discovery)
     #[arg(long, value_name = "PATH")]
@@ -194,6 +205,8 @@ impl Default for HealthArgs {
             limit: 0,
             hotspots: false,
             top: 10,
+            baseline: None,
+            write_baseline: None,
             config: None,
         }
     }

@@ -36,6 +36,9 @@ pub struct HealthConfig {
     pub max_file_lines: Option<u32>,
     pub max_type_members: Option<u32>,
     pub exclude_tests: Option<bool>,
+    /// Path to a baseline file, relative to this config file's own directory
+    /// the way `ignore` globs are.
+    pub baseline: Option<String>,
 }
 
 pub struct ResolvedConfig {
@@ -247,6 +250,31 @@ pub fn merge_health(config: Option<&HealthConfig>, cli: HealthOverrides) -> Effe
     }
 }
 
+/// Which baseline file, if any, this run filters against.
+///
+/// Kept out of [`EffectiveHealth`] because a `PathBuf` is not `Copy` and the
+/// thresholds are passed around by value everywhere; the precedence is the
+/// same three-way fallback [`merge_health`] applies.
+///
+/// A config-file path resolves against the config's own directory, so
+/// `"roe-baseline.json"` means the one sitting next to `roe.json` no matter
+/// which subdirectory the run started in. A `--baseline` path is left exactly
+/// as typed, since the shell that typed it resolved it against the working
+/// directory already.
+pub fn resolve_baseline(
+    config: Option<&HealthConfig>,
+    config_dir: Option<&Path>,
+    cli: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(path) = cli {
+        return Some(path.to_path_buf());
+    }
+
+    let named = config.and_then(|health| health.baseline.as_deref())?;
+
+    Some(config_dir.unwrap_or(Path::new("")).join(named))
+}
+
 /// The subset of `HealthArgs` that participates in config merging — passed as
 /// a struct so the six same-typed thresholds can't be transposed at the call
 /// site.
@@ -455,6 +483,52 @@ mod tests {
             ..Default::default()
         };
         assert!(merge_health(Some(&config), HealthOverrides::default()).exclude_tests);
+    }
+
+    #[test]
+    fn a_config_baseline_resolves_against_the_config_directory() {
+        // Not against the working directory: `roe health src/App` from the
+        // repository root has to find the same file as a run from inside
+        // `src/App`.
+        let config = HealthConfig {
+            baseline: Some("roe-baseline.json".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_baseline(Some(&config), Some(Path::new("/repo")), None),
+            Some(Path::new("/repo").join("roe-baseline.json"))
+        );
+    }
+
+    #[test]
+    fn an_explicit_baseline_flag_wins_and_is_taken_as_typed() {
+        let config = HealthConfig {
+            baseline: Some("roe-baseline.json".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_baseline(
+                Some(&config),
+                Some(Path::new("/repo")),
+                Some(Path::new("other.json"))
+            ),
+            Some(PathBuf::from("other.json"))
+        );
+    }
+
+    #[test]
+    fn no_baseline_in_either_place_filters_nothing() {
+        assert_eq!(
+            resolve_baseline(
+                Some(&HealthConfig::default()),
+                Some(Path::new("/repo")),
+                None
+            ),
+            None
+        );
+        assert_eq!(resolve_baseline(None, None, None), None);
     }
 
     #[test]

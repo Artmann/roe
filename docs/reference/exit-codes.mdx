@@ -31,6 +31,13 @@ distinct warning once, not once per analysis.
   check useless as a gate.
 </Note>
 
+A run under a [baseline](/commands/health#baselines) exits `0` when every
+finding it made was already recorded — that's what the baseline is for — and
+`1` as soon as one isn't. `--write-baseline` always exits `0`: it records the
+codebase rather than judging it. A missing, malformed, or unsupported
+baseline file is an error and exits `2`, since silently continuing without
+one would report the whole backlog as new.
+
 ## In CI
 
 Because findings exit with `1`, roe fails a CI step out of the box:
