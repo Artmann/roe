@@ -4,7 +4,7 @@ use lasso::{Spur, ThreadedRodeo};
 use rayon::prelude::*;
 use smallvec::SmallVec;
 
-use crate::model::{FileId, Modifiers, SourceFile, SymbolKind};
+use crate::model::{FileId, Modifiers, ParameterBreakdown, SourceFile, SymbolKind};
 
 /// Origin sentinel for references that don't sit inside any declaration
 /// (top-level statements, assembly attributes).
@@ -45,9 +45,10 @@ pub struct RawDecl {
     /// Line span of the body, from the opening to the closing brace/arrow
     /// expression (members with a body only; 0 otherwise).
     pub body_lines: u32,
-    /// Declared parameter count (methods/constructors/operators/indexers
-    /// only; 0 otherwise).
-    pub parameter_count: u32,
+    /// The parameter list split into what the caller must supply and what it
+    /// may leave out (methods/constructors/operators/indexers only; all zero
+    /// otherwise). `total()` is the declared count as written in the source.
+    pub parameters: ParameterBreakdown,
     pub line: u32,
     pub column: u32,
 }

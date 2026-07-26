@@ -3,7 +3,7 @@ use smallvec::{SmallVec, smallvec};
 use tree_sitter::Node;
 
 use crate::extract::{FILE_ROOT, FileFacts, NamePath, RawDecl, RawRef, RawRefKind, UsingEntry};
-use crate::model::{FileId, MemberKind, Modifiers, SymbolKind, TypeKind};
+use crate::model::{FileId, MemberKind, Modifiers, ParameterBreakdown, SymbolKind, TypeKind};
 
 /// Extract declarations and references from a parsed compilation unit.
 ///
@@ -508,7 +508,7 @@ impl<'a> Walker<'a> {
             || node.child_by_field_name("value").is_some()
             || has_accessors;
         let (cyclomatic, cognitive, body_lines) = compute_member_complexity(node, kind);
-        let parameter_count = count_parameters(node);
+        let parameters = count_parameters(node, self.source);
 
         let position_node = name_node.unwrap_or(node);
         let interned_name = self.intern(&name);
@@ -526,7 +526,7 @@ impl<'a> Walker<'a> {
                 decl.cyclomatic = cyclomatic;
                 decl.cognitive = cognitive;
                 decl.body_lines = body_lines;
-                decl.parameter_count = parameter_count;
+                decl.parameters = parameters;
             },
         );
 
@@ -644,7 +644,7 @@ impl<'a> Walker<'a> {
             cyclomatic: 0,
             cognitive: 0,
             body_lines: 0,
-            parameter_count: 0,
+            parameters: ParameterBreakdown::default(),
             line: position.row as u32 + 1,
             column: position.column as u32 + 1,
         };
@@ -1023,17 +1023,51 @@ fn cognitive_boolean_sequence(node: Node) -> u32 {
     }
 }
 
-/// Declared parameter count from a `parameters` field (`parameter_list` or
-/// `bracketed_parameter_list` — both use `parameter` children).
-fn count_parameters(node: Node) -> u32 {
+/// Split the `parameters` field (`parameter_list` or
+/// `bracketed_parameter_list` — both use `parameter` children) into what a
+/// call site has to supply and what it may leave out.
+///
+/// `out` parameters are return values, and defaulted parameters and `params`
+/// arrays are omittable, so none of the three cost the caller anything. `ref`,
+/// `in`, and an extension method's `this` receiver are all written at the call
+/// site, so all three are required.
+fn count_parameters(node: Node, source: &[u8]) -> ParameterBreakdown {
+    let mut breakdown = ParameterBreakdown::default();
+
     let Some(parameters) = node.child_by_field_name("parameters") else {
-        return 0;
+        return breakdown;
     };
+
     let mut cursor = parameters.walk();
-    parameters
-        .children(&mut cursor)
-        .filter(|c| c.kind() == "parameter")
-        .count() as u32
+    for child in parameters.children(&mut cursor) {
+        match child.kind() {
+            // The grammar hides `_parameter_array`, so it inlines into the
+            // parameter list: a `params` array shows up as a bare `params`
+            // token followed by loose type and name nodes, with no `parameter`
+            // wrapper to match on.
+            "params" => breakdown.optional += 1,
+            "parameter" => {
+                if has_modifier(child, source, "out") {
+                    breakdown.out += 1;
+                } else if has_default_value(child) {
+                    breakdown.optional += 1;
+                } else {
+                    breakdown.required += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    breakdown
+}
+
+/// A default value is a bare `= expression` tail on the parameter with no
+/// wrapper node of its own, so the `=` token is what there is to look for.
+fn has_default_value(parameter: Node) -> bool {
+    let mut cursor = parameter.walk();
+
+    parameter.children(&mut cursor).any(|c| c.kind() == "=")
 }
 
 #[cfg(test)]
@@ -1984,7 +2018,7 @@ class C
         let m = decl_named(&facts, &rodeo, "M");
         assert_eq!(m.cyclomatic, 2);
         assert_eq!(m.body_lines, 1);
-        assert_eq!(m.parameter_count, 1);
+        assert_eq!(m.parameters.required, 1);
     }
 
     #[test]
@@ -2040,6 +2074,139 @@ class C
 }
 "#,
         );
-        assert_eq!(decl_named(&facts, &rodeo, "M").parameter_count, 3);
+        let parameters = decl_named(&facts, &rodeo, "M").parameters;
+        assert_eq!(parameters.required, 3);
+        assert_eq!(parameters.total(), 3);
+    }
+
+    #[test]
+    fn defaulted_parameters_are_optional_not_required() {
+        // The issue's first repro: sixteen parameters, two of which the caller
+        // actually has to supply. `Sum(1, 2)` is the whole call site.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    int Sum(int required1, int required2, int p3 = 0, int p4 = 0, int p5 = 0,
+            int p6 = 0, int p7 = 0, int p8 = 0, int p9 = 0, int p10 = 0,
+            int p11 = 0, int p12 = 0, int p13 = 0, int p14 = 0, int p15 = 0,
+            int p16 = 0)
+    {
+        return required1 + required2;
+    }
+}
+"#,
+        );
+        let parameters = decl_named(&facts, &rodeo, "Sum").parameters;
+        assert_eq!(parameters.required, 2);
+        assert_eq!(parameters.optional, 14);
+        assert_eq!(parameters.out, 0);
+        assert_eq!(parameters.total(), 16, "the declared signature is intact");
+    }
+
+    #[test]
+    fn out_parameters_are_returns_not_arguments() {
+        // The issue's second repro. An `out` is a return value wearing a
+        // parameter's clothes — the caller supplies nothing.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    bool TryGet(int a, int b, int c, int d, out int first, out int second)
+    {
+        first = 0;
+        second = 0;
+        return false;
+    }
+}
+"#,
+        );
+        let parameters = decl_named(&facts, &rodeo, "TryGet").parameters;
+        assert_eq!(parameters.required, 4);
+        assert_eq!(parameters.optional, 0);
+        assert_eq!(parameters.out, 2);
+        assert_eq!(parameters.total(), 6);
+    }
+
+    #[test]
+    fn ref_and_in_and_the_extension_receiver_are_all_required() {
+        // `ref` is supplied *and* has to be reasoned about; `in` is a calling
+        // convention, not an escape hatch; and an extension method's `this`
+        // receiver is still an argument, just written to the left of the dot.
+        let (facts, rodeo) = extract(
+            r#"
+static class C
+{
+    public static void M(this Widget widget, ref int total, in Span<byte> data)
+    {
+    }
+}
+"#,
+        );
+        let parameters = decl_named(&facts, &rodeo, "M").parameters;
+        assert_eq!(parameters.required, 3);
+        assert_eq!(parameters.optional, 0);
+        assert_eq!(parameters.out, 0);
+    }
+
+    #[test]
+    fn a_params_array_is_optional() {
+        // The grammar inlines `_parameter_array` into the parameter list, so
+        // there is no `parameter` node to find and roe used not to count a
+        // `params` array at all. Omitting it is always legal, so it belongs
+        // with the defaulted ones rather than nowhere.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M(string format, params object[] arguments) { }
+}
+"#,
+        );
+        let parameters = decl_named(&facts, &rodeo, "M").parameters;
+        assert_eq!(parameters.required, 1);
+        assert_eq!(parameters.optional, 1);
+        assert_eq!(parameters.total(), 2);
+    }
+
+    #[test]
+    fn an_indexers_parameters_are_measured_the_same_way() {
+        // Indexers use `bracketed_parameter_list`, a different node kind with
+        // the same `parameter` children.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    public int this[int row, int column = 0] => 0;
+}
+"#,
+        );
+        let parameters = decl_named(&facts, &rodeo, "this[]").parameters;
+        assert_eq!(parameters.required, 1);
+        assert_eq!(parameters.optional, 1);
+    }
+
+    #[test]
+    fn an_overload_suffix_uses_the_declared_arity_not_the_required_one() {
+        // The `/arity` suffix exists so a reader can match a report row to a
+        // signature in the source, so it has to count what the source shows.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void Send(string to) { }
+
+    void Send(string to, string cc = "", out int sent) { sent = 0; }
+}
+"#,
+        );
+        let declared: Vec<u32> = facts
+            .decls
+            .iter()
+            .filter(|decl| rodeo.resolve(&decl.name) == "Send")
+            .map(|decl| decl.parameters.total())
+            .collect();
+
+        assert_eq!(declared, vec![1, 3]);
     }
 }

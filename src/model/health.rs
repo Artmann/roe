@@ -101,6 +101,57 @@ impl MemberBreakdown {
     }
 }
 
+/// What a [`HealthFindingKind::TooManyParameters`] finding's parameter list is
+/// actually made of. The limit exists to bound call-site burden — how much a
+/// caller has to supply, and how much they have to keep straight while doing
+/// it — so only `required` is measured against it. The rest travels with the
+/// finding so a long declaration stays visible in the report.
+#[derive(Debug, Default, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParameterBreakdown {
+    /// Parameters the caller has to supply and think about: no default value
+    /// and not `out`. `ref`, `in`, and an extension method's `this` receiver
+    /// all land here — each is still an argument written at the call site.
+    pub required: u32,
+    /// Defaulted parameters and `params` arrays. Omitting either is legal, so
+    /// neither costs the caller anything.
+    pub optional: u32,
+    /// `out` parameters — return values wearing a parameter's clothes. The
+    /// caller supplies nothing.
+    pub out: u32,
+}
+
+impl ParameterBreakdown {
+    /// The declared parameter count, which is what the source signature shows
+    /// and what the `/arity` overload suffix has to match.
+    pub fn total(&self) -> u32 {
+        self.required + self.optional + self.out
+    }
+
+    /// The declared signature spelled out, or an empty string when every
+    /// parameter is required — `6/5 params (6 declared: 6 required)` says the
+    /// same thing twice. Empty categories are dropped.
+    pub fn describe(&self) -> String {
+        if self.optional == 0 && self.out == 0 {
+            return String::new();
+        }
+
+        // `required` is the metric being explained, so it is always named even
+        // at zero; the other two only appear when they are the reason the
+        // metric and the declared total disagree.
+        let mut parts = vec![format!("{} required", self.required)];
+
+        if self.optional > 0 {
+            parts.push(format!("{} optional", self.optional));
+        }
+        if self.out > 0 {
+            parts.push(format!("{} out", self.out));
+        }
+
+        format!("{} declared: {}", self.total(), parts.join(", "))
+    }
+}
+
 #[derive(Debug)]
 pub struct HealthFinding {
     pub kind: HealthFindingKind,
@@ -118,6 +169,10 @@ pub struct HealthFinding {
     pub threshold: u32,
     /// Populated for [`HealthFindingKind::LargeType`] only.
     pub breakdown: Option<MemberBreakdown>,
+    /// Populated for [`HealthFindingKind::TooManyParameters`] only. `metric`
+    /// is this breakdown's `required` count; the rest of the declaration lives
+    /// here.
+    pub parameters: Option<ParameterBreakdown>,
 }
 
 impl HealthFinding {
@@ -319,6 +374,45 @@ mod tests {
     }
 
     #[test]
+    fn a_parameter_breakdown_totals_the_declared_signature() {
+        let parameters = ParameterBreakdown {
+            required: 8,
+            optional: 2,
+            out: 1,
+        };
+
+        assert_eq!(parameters.total(), 11);
+        assert_eq!(
+            parameters.describe(),
+            "11 declared: 8 required, 2 optional, 1 out"
+        );
+    }
+
+    #[test]
+    fn a_parameter_breakdown_drops_the_categories_it_has_none_of() {
+        let parameters = ParameterBreakdown {
+            required: 4,
+            optional: 0,
+            out: 2,
+        };
+
+        assert_eq!(parameters.describe(), "6 declared: 4 required, 2 out");
+    }
+
+    #[test]
+    fn an_all_required_signature_has_nothing_to_explain() {
+        // `6/5 params (6 declared: 6 required)` says the same thing twice.
+        let parameters = ParameterBreakdown {
+            required: 6,
+            optional: 0,
+            out: 0,
+        };
+
+        assert_eq!(parameters.total(), 6);
+        assert_eq!(parameters.describe(), "");
+    }
+
+    #[test]
     fn severity_is_the_multiple_of_the_threshold() {
         let finding = HealthFinding {
             kind: HealthFindingKind::HighComplexity,
@@ -330,6 +424,7 @@ mod tests {
             metric: 46,
             threshold: 10,
             breakdown: None,
+            parameters: None,
         };
 
         assert!((finding.severity() - 4.6).abs() < f64::EPSILON);

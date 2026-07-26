@@ -166,6 +166,21 @@ including its own `version` and `root`, so anything already written against
         "fields": 0,
         "events": 0
       }
+    },
+    {
+      "kind": "too-many-parameters",
+      "name": "App.Billing.InvoiceService.Reconcile",
+      "project": "App",
+      "file": "src/App/Billing/InvoiceService.cs",
+      "line": 42,
+      "column": 17,
+      "metric": 8,
+      "threshold": 5,
+      "parameters": {
+        "required": 8,
+        "optional": 2,
+        "out": 1
+      }
     }
   ],
   "cycles": [
@@ -202,9 +217,10 @@ including its own `version` and `root`, so anything already written against
 | `findings[].name` | Fully-qualified symbol name, or the file path for a large file. |
 | `findings[].project` | The containing project. Optional. |
 | `findings[].file`, `line`, `column` | Location of the finding; large-file findings are pinned at `1:1`. |
-| `findings[].metric` | The measured value — the complexity score, line count, parameter count, or member count. |
+| `findings[].metric` | The measured value — the complexity score, line count, member count, or, for `too-many-parameters`, the **required** parameter count rather than the declared total. |
 | `findings[].threshold` | The threshold it exceeded. `metric / threshold` is the severity the human report sorts by. |
 | `findings[].breakdown` | Member composition — `methods`, `properties`, `fields`, `events`. Present on `large-type` findings only. |
+| `findings[].parameters` | Signature composition — `required`, `optional`, `out`. Present on `too-many-parameters` findings only. `required` always equals `metric`; the three sum to the declared parameter count. |
 | `cycles[].path` | The types on the cycle, each referencing the next and the last referencing the first. Each entry has `name`, `project`, `file`, `line`, `column`. |
 | `cycles[].others` | Types in the same tangle that aren't on `path`. Empty for a simple cycle. |
 | `hotspots[]` | Present only with `--hotspots`: `file`, `project`, `score`, `weightedCommits`, `cyclomatic`, `lines`, `complexityDensity`. Empty otherwise. |

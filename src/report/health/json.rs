@@ -1,6 +1,8 @@
 use serde::Serialize;
 
-use crate::model::{CycleMember, HealthFindingKind, HealthResult, MemberBreakdown, Workspace};
+use crate::model::{
+    CycleMember, HealthFindingKind, HealthResult, MemberBreakdown, ParameterBreakdown, Workspace,
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +49,10 @@ struct JsonFinding {
     /// Present on `large-type` findings only — what the members actually are.
     #[serde(skip_serializing_if = "Option::is_none")]
     breakdown: Option<MemberBreakdown>,
+    /// Present on `too-many-parameters` findings only. `metric` is the
+    /// `required` count; the declared signature is `required + optional + out`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parameters: Option<ParameterBreakdown>,
 }
 
 #[derive(Serialize)]
@@ -131,6 +137,7 @@ pub(crate) fn build(result: &HealthResult, workspace: &Workspace) -> JsonReport 
                 metric: finding.metric,
                 threshold: finding.threshold,
                 breakdown: finding.breakdown,
+                parameters: finding.parameters,
             })
             .collect(),
         cycles: result

@@ -97,6 +97,95 @@ fn too_many_parameters_flags_the_six_parameter_method_only() {
 }
 
 #[test]
+fn only_required_parameters_count_towards_the_limit() {
+    // At a limit of 5, the sixteen-parameter method (two required) and the
+    // six-parameter method (two of them `out`) both stay silent, while the
+    // two methods with six genuinely required parameters fire.
+    let mut thresholds = lenient();
+    thresholds.max_parameters = 5;
+
+    assert_findings(
+        findings("health_optional_params", thresholds),
+        vec![
+            (
+                HealthFindingKind::TooManyParameters,
+                "OptionalParams.Extensions.Blend".to_string(),
+            ),
+            (
+                HealthFindingKind::TooManyParameters,
+                "OptionalParams.Signatures.Configure".to_string(),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_parameter_finding_reports_the_metric_and_the_declared_signature() {
+    // The metric is what tripped the limit; the breakdown is what the reader
+    // needs in order to see why the two numbers differ.
+    let mut thresholds = lenient();
+    thresholds.max_parameters = 1;
+
+    let analysis =
+        analyze(&fixture("health_optional_params"), thresholds).expect("analysis should succeed");
+    let by_name = |name: &str| {
+        analysis
+            .result
+            .findings
+            .iter()
+            .find(|finding| finding.name == name)
+            .unwrap_or_else(|| panic!("{name} should be flagged"))
+    };
+
+    let sum = by_name("OptionalParams.Signatures.Sum");
+    let parameters = sum.parameters.expect("a parameter finding carries a split");
+    assert_eq!(sum.metric, 2, "two required, not sixteen declared");
+    assert_eq!(parameters.required, 2);
+    assert_eq!(parameters.optional, 14);
+    assert_eq!(parameters.out, 0);
+    assert_eq!(parameters.total(), 16);
+
+    let try_get = by_name("OptionalParams.Signatures.TryGet");
+    let parameters = try_get
+        .parameters
+        .expect("a parameter finding carries a split");
+    assert_eq!(try_get.metric, 4);
+    assert_eq!(parameters.out, 2);
+
+    // `Log(string message, params object[] arguments)` has two parameters in
+    // the source and one at the call site, so even a limit of one leaves it
+    // alone.
+    assert!(
+        !analysis
+            .result
+            .findings
+            .iter()
+            .any(|finding| finding.name == "OptionalParams.Signatures.Log"),
+        "a params array is omittable, so Log asks for one parameter"
+    );
+}
+
+#[test]
+fn only_parameter_findings_carry_a_parameter_split() {
+    // The split is additive to the v1 finding shape, so it must not leak on
+    // to the kinds that never had it.
+    let mut thresholds = lenient();
+    thresholds.max_complexity = 3;
+    thresholds.max_type_members = 3;
+
+    let analysis =
+        analyze(&fixture("health_metrics"), thresholds).expect("analysis should succeed");
+    for finding in &analysis.result.findings {
+        assert!(
+            finding.parameters.is_none(),
+            "{:?} should carry no parameter split, got {:?}",
+            finding.kind,
+            finding.parameters
+        );
+    }
+}
+
+#[test]
 fn large_type_flags_widget_which_has_four_members() {
     let mut thresholds = lenient();
     thresholds.max_type_members = 3;

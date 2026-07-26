@@ -63,7 +63,12 @@ expression: stdout
       "line": 17,
       "column": 17,
       "metric": 6,
-      "threshold": 3
+      "threshold": 3,
+      "parameters": {
+        "required": 6,
+        "optional": 0,
+        "out": 0
+      }
     }
   ],
   "cycles": [
