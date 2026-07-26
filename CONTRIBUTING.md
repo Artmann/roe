@@ -113,7 +113,8 @@ code style guide.
    reads at a glance are forgiven — an `else if` chain stays flat and a run of
    `&&` counts once. Type size comes from `MemberBreakdown::record`, which
    buckets constructors, operators, and indexers into `methods` and refuses
-   enum cases outright.
+   enum cases and `const` fields outright — neither carries behaviour, so
+   neither can be part of the cohesion problem the check looks for.
 3. **Threshold** — `collect_findings` emits a finding where a metric is
    strictly greater than its limit, so a value equal to the threshold is
    still clean. `HealthFinding::severity` is `metric / threshold`, which is

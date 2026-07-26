@@ -325,7 +325,10 @@ fn collect_findings(
             continue;
         };
 
-        member_counts.entry(parent).or_default().record(kind);
+        member_counts
+            .entry(parent)
+            .or_default()
+            .record(kind, symbol.modifiers);
     }
 
     // Type-level dependency edges. Not reported as a finding of their own —

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::model::MemberKind;
+use crate::model::{MemberKind, Modifiers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -29,10 +29,19 @@ pub struct MemberBreakdown {
 }
 
 impl MemberBreakdown {
-    /// Bucket one member. Returns false for kinds that deliberately don't
-    /// count towards a type's size: an enum's cases are the enum's whole
-    /// point, and counting them would report a 25-case enum as a god class.
-    pub fn record(&mut self, kind: MemberKind) -> bool {
+    /// Bucket one member. Returns false for members that deliberately don't
+    /// count towards a type's size:
+    ///
+    /// - An enum's cases are the enum's whole point, and counting them would
+    ///   report a 25-case enum as a god class.
+    /// - A `const` field is a name for a literal, inlined at every call site.
+    ///   It has no behaviour and no runtime state, so a type holding fifty of
+    ///   them is a lookup table rather than a cohesion problem.
+    ///
+    /// `static readonly` is *not* exempt. roe has no type analysis, so it
+    /// cannot tell a `static readonly float` tuning value from a
+    /// `static readonly HttpClient` the type genuinely depends on.
+    pub fn record(&mut self, kind: MemberKind, modifiers: Modifiers) -> bool {
         match kind {
             MemberKind::Constructor
             | MemberKind::ConversionOperator
@@ -42,7 +51,13 @@ impl MemberBreakdown {
             | MemberKind::Operator
             | MemberKind::StaticConstructor => self.methods += 1,
             MemberKind::Property => self.properties += 1,
-            MemberKind::Field => self.fields += 1,
+            MemberKind::Field => {
+                if modifiers.contains(Modifiers::CONST) {
+                    return false;
+                }
+
+                self.fields += 1;
+            }
             MemberKind::Event => self.events += 1,
             MemberKind::EnumMember => return false,
         }
@@ -206,8 +221,50 @@ mod tests {
     #[test]
     fn enum_members_do_not_count_towards_type_size() {
         let mut breakdown = MemberBreakdown::default();
-        assert!(!breakdown.record(MemberKind::EnumMember));
+        assert!(!breakdown.record(MemberKind::EnumMember, Modifiers::empty()));
         assert_eq!(breakdown.total(), 0);
+    }
+
+    #[test]
+    fn const_fields_do_not_count_towards_type_size() {
+        // A `const` is a name for a literal, inlined at every call site. It
+        // carries no behaviour and no runtime state, so a registry of tuning
+        // values is a lookup table rather than a god class.
+        let mut breakdown = MemberBreakdown::default();
+        assert!(!breakdown.record(
+            MemberKind::Field,
+            Modifiers::PUBLIC | Modifiers::CONST | Modifiers::STATIC
+        ));
+
+        assert_eq!(breakdown.fields, 0);
+        assert_eq!(breakdown.total(), 0);
+        assert_eq!(breakdown.describe(), "");
+    }
+
+    #[test]
+    fn plain_and_static_readonly_fields_still_count() {
+        // roe has no type analysis, so it cannot tell a `static readonly`
+        // tuning value from a `static readonly HttpClient` the type genuinely
+        // depends on. Only `const` is unambiguous enough to exempt.
+        let mut breakdown = MemberBreakdown::default();
+        assert!(breakdown.record(MemberKind::Field, Modifiers::PRIVATE));
+        assert!(breakdown.record(
+            MemberKind::Field,
+            Modifiers::PRIVATE | Modifiers::STATIC | Modifiers::READONLY
+        ));
+
+        assert_eq!(breakdown.fields, 2);
+        assert_eq!(breakdown.total(), 2);
+    }
+
+    #[test]
+    fn a_const_modifier_only_exempts_fields() {
+        // Nothing else in C# can be `const`, but the guard must not leak into
+        // another bucket if a future extractor ever sets the flag elsewhere.
+        let mut breakdown = MemberBreakdown::default();
+        assert!(breakdown.record(MemberKind::Method, Modifiers::CONST));
+
+        assert_eq!(breakdown.methods, 1);
     }
 
     #[test]
@@ -219,7 +276,7 @@ mod tests {
             MemberKind::Method,
             MemberKind::Operator,
         ] {
-            assert!(breakdown.record(kind));
+            assert!(breakdown.record(kind, Modifiers::empty()));
         }
 
         assert_eq!(breakdown.methods, 4);
@@ -238,7 +295,7 @@ mod tests {
             (MemberKind::Event, 1),
         ] {
             for _ in 0..times {
-                assert!(breakdown.record(kind));
+                assert!(breakdown.record(kind, Modifiers::empty()));
             }
         }
 

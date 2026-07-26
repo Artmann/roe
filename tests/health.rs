@@ -111,6 +111,66 @@ fn large_type_flags_widget_which_has_four_members() {
 }
 
 #[test]
+fn const_fields_do_not_count_towards_a_types_size() {
+    // Tuning is twenty-one consts and nothing else, so it stays silent even
+    // at a limit of three. Mixed keeps its four non-const members and Statics
+    // keeps its four `static readonly` fields, so both still trip.
+    let mut thresholds = lenient();
+    thresholds.max_type_members = 3;
+
+    assert_findings(
+        findings("health_const_registry", thresholds),
+        vec![
+            (
+                HealthFindingKind::LargeType,
+                "ConstRegistry.Mixed".to_string(),
+            ),
+            (
+                HealthFindingKind::LargeType,
+                "ConstRegistry.Statics".to_string(),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_const_registry_is_silent_even_at_a_limit_of_zero() {
+    // Not merely under the limit — excluded outright, the way enum cases are.
+    let mut thresholds = lenient();
+    thresholds.max_type_members = 0;
+
+    let flagged = findings("health_const_registry", thresholds);
+    assert!(
+        !flagged
+            .iter()
+            .any(|(_, name)| name == "ConstRegistry.Tuning"),
+        "a pure const registry has no countable members, got {flagged:?}"
+    );
+}
+
+#[test]
+fn a_large_types_metric_counts_only_what_the_breakdown_prints() {
+    // The printed breakdown has to sum to the printed metric, or the report
+    // is telling the reader two different numbers for the same type.
+    let mut thresholds = lenient();
+    thresholds.max_type_members = 3;
+
+    let analysis =
+        analyze(&fixture("health_const_registry"), thresholds).expect("analysis should succeed");
+    let mixed = analysis
+        .result
+        .findings
+        .iter()
+        .find(|finding| finding.name == "ConstRegistry.Mixed")
+        .expect("Mixed should be flagged");
+    let breakdown = mixed.breakdown.expect("a large type carries a breakdown");
+
+    assert_eq!(mixed.metric, 4, "one property, one field, two methods");
+    assert_eq!(breakdown.total(), mixed.metric);
+    assert_eq!(breakdown.fields, 1, "only the non-const field");
+}
+
+#[test]
 fn large_file_flags_files_over_the_line_limit() {
     let mut thresholds = lenient();
     thresholds.max_file_lines = 5;
