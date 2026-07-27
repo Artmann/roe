@@ -2,11 +2,11 @@ use std::collections::VecDeque;
 
 use fixedbitset::FixedBitSet;
 use lasso::Spur;
-use crate::extract::Interner;
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::extract::{FILE_ROOT, FileFacts, RawRefKind};
+use crate::extract::{FILE_ROOT, FileFacts, Interner, RawRefKind};
 use crate::model::{ProjectId, SymbolId, Workspace};
 use crate::resolve::{Resolution, SymbolFlags};
 
@@ -100,6 +100,158 @@ fn render_paths(paths: &[Vec<Spur>], rodeo: &Interner) -> Vec<String> {
     paths.iter().map(|path| render_path(path, rodeo)).collect()
 }
 
+/// One file's resolved references, indexed by that file's own declaration
+/// slots rather than by `SymbolId`.
+///
+/// Slot-indexing is what lets files resolve concurrently: two files can share
+/// a `SymbolId` (partial types) and two slots within a file can too (method
+/// overloads merge), so writing straight to a shared per-symbol array would
+/// need coordination. The slot → symbol mapping is applied when merging.
+/// The last slot, `local_map.len()`, stands for the file root.
+struct FileOutput {
+    edges: Vec<Vec<SymbolId>>,
+    names: Vec<Vec<Spur>>,
+    scan_targets: Vec<SymbolId>,
+}
+
+/// Resolve every reference in one file. Reads the symbol table and interner
+/// but mutates neither, apart from interning `…Attribute` probes — which
+/// `ThreadedRodeo` handles concurrently, and which extraction already does
+/// from multiple threads.
+fn resolve_file(
+    resolver: &Resolver,
+    file_facts: &FileFacts,
+    workspace: &Workspace,
+    resolution: &Resolution,
+    project_global_strings: &FxHashMap<ProjectId, Vec<String>>,
+    all_global_strings: &[String],
+    scratch: &mut Scratch,
+) -> FileOutput {
+    let rodeo = resolver.rodeo;
+    let file = &workspace.files[file_facts.file.index()];
+    // Files with a project see that project's globals; orphan files see
+    // every global (over-inclusion is safe).
+    let global_usings = match file.project.and_then(|p| project_global_strings.get(&p)) {
+        Some(globals) => globals.as_slice(),
+        None => all_global_strings,
+    };
+    let mut context = FileContext {
+        local_usings: Vec::new(),
+        global_usings,
+        aliases: FxHashMap::default(),
+        has_errors: file_facts.has_errors,
+    };
+    for using in &file_facts.usings {
+        if using.is_static {
+            continue; // target already emitted as a Type reference
+        }
+        match using.alias {
+            Some(alias) => {
+                context.aliases.insert(alias, using.path.clone());
+            }
+            None => context.local_usings.push(render_path(&using.path, rodeo)),
+        }
+    }
+
+    let local_map = &resolution.decl_map[file_facts.file.index()];
+    let file_root = resolution.file_roots[file_facts.file.index()];
+    let slot_count = local_map.len() + 1;
+    let mut output = FileOutput {
+        edges: vec![Vec::new(); slot_count],
+        names: vec![Vec::new(); slot_count],
+        scan_targets: Vec::new(),
+    };
+
+    for raw_ref in &file_facts.refs {
+        let slot = if raw_ref.origin == FILE_ROOT {
+            local_map.len()
+        } else {
+            raw_ref.origin as usize
+        };
+        // The origin symbol is still needed: resolution is scoped by where the
+        // reference sits, not by which slot collects it.
+        let origin = if raw_ref.origin == FILE_ROOT {
+            file_root
+        } else {
+            local_map[raw_ref.origin as usize]
+        };
+
+        match raw_ref.kind {
+            RawRefKind::Type => {
+                resolver.resolve_type_path(
+                    &raw_ref.path,
+                    origin,
+                    &context,
+                    scratch,
+                    &mut output.edges[slot],
+                    &mut output.names[slot],
+                );
+            }
+            RawRefKind::Member => {
+                if let Some(&last) = raw_ref.path.last() {
+                    output.names[slot].push(last);
+                }
+            }
+            RawRefKind::Ambient => {
+                resolver.resolve_type_path(
+                    &raw_ref.path,
+                    origin,
+                    &context,
+                    scratch,
+                    &mut output.edges[slot],
+                    &mut output.names[slot],
+                );
+                if raw_ref.path.len() == 1 {
+                    output.names[slot].push(raw_ref.path[0]);
+                }
+            }
+            RawRefKind::ScanTarget => {
+                // The generic argument itself is already a Type reference
+                // (emitted by the generic-name walk); here we only record
+                // which in-source types are reflection-scan contracts.
+                let mut targets = Vec::new();
+                let mut discard = Vec::new();
+                resolver.resolve_type_path(
+                    &raw_ref.path,
+                    origin,
+                    &context,
+                    scratch,
+                    &mut targets,
+                    &mut discard,
+                );
+                output.scan_targets.extend(targets);
+            }
+            RawRefKind::Attribute => {
+                resolver.resolve_type_path(
+                    &raw_ref.path,
+                    origin,
+                    &context,
+                    scratch,
+                    &mut output.edges[slot],
+                    &mut output.names[slot],
+                );
+                // [Authorize] → class AuthorizeAttribute.
+                if let Some(&last) = raw_ref.path.last() {
+                    let with_suffix =
+                        rodeo.get_or_intern(format!("{}Attribute", rodeo.resolve(&last)));
+                    let mut suffixed: SmallVec<[Spur; 2]> = SmallVec::from_slice(&raw_ref.path);
+                    *suffixed.last_mut().expect("non-empty path") = with_suffix;
+                    resolver.resolve_type_path(
+                        &suffixed,
+                        origin,
+                        &context,
+                        scratch,
+                        &mut output.edges[slot],
+                        &mut output.names[slot],
+                    );
+                }
+            }
+        }
+    }
+
+    output
+}
+
 /// Build reference edges by resolving every raw reference against the symbol
 /// table, then flatten into CSR form. Also roots implementations of
 /// scan-target types (reflection-based registration).
@@ -151,116 +303,49 @@ pub fn build_graph(
         resolution: &*resolution,
         rodeo,
     };
-    let mut scratch = Scratch::default();
 
-    for file_facts in facts {
-        let file = &workspace.files[file_facts.file.index()];
-        // Files with a project see that project's globals; orphan files see
-        // every global (over-inclusion is safe).
-        let global_usings = match file.project.and_then(|p| project_global_strings.get(&p)) {
-            Some(globals) => globals.as_slice(),
-            None => all_global_strings.as_slice(),
-        };
-        let mut context = FileContext {
-            local_usings: Vec::new(),
-            global_usings,
-            aliases: FxHashMap::default(),
-            has_errors: file_facts.has_errors,
-        };
-        for using in &file_facts.usings {
-            if using.is_static {
-                continue; // target already emitted as a Type reference
-            }
-            match using.alias {
-                Some(alias) => {
-                    context.aliases.insert(alias, using.path.clone());
-                }
-                None => context.local_usings.push(render_path(&using.path, rodeo)),
-            }
-        }
+    // Resolve each file independently, then merge. Files write only into their
+    // own slot-indexed buffers, so nothing is shared but the read-only symbol
+    // table and the interner (which is built for concurrent access).
+    let per_file: Vec<FileOutput> = facts
+        .par_iter()
+        .map_init(Scratch::default, |scratch, file_facts| {
+            resolve_file(
+                &resolver,
+                file_facts,
+                workspace,
+                resolution,
+                &project_global_strings,
+                &all_global_strings,
+                scratch,
+            )
+        })
+        .collect();
 
+    // Merge slot-indexed output back onto symbols. Both lists are sorted and
+    // deduped in the CSR flatten below, so merge order cannot affect the graph.
+    for (file_facts, output) in facts.iter().zip(per_file) {
         let local_map = &resolution.decl_map[file_facts.file.index()];
         let file_root = resolution.file_roots[file_facts.file.index()];
-
-        for raw_ref in &file_facts.refs {
-            let origin = if raw_ref.origin == FILE_ROOT {
+        let origin_of = |slot: usize| {
+            if slot == local_map.len() {
                 file_root
             } else {
-                local_map[raw_ref.origin as usize]
-            };
+                local_map[slot]
+            }
+        };
 
-            match raw_ref.kind {
-                RawRefKind::Type => {
-                    resolver.resolve_type_path(
-                        &raw_ref.path,
-                        origin,
-                        &context,
-                        &mut scratch,
-                        &mut edge_lists[origin.index()],
-                        &mut name_lists[origin.index()],
-                    );
-                }
-                RawRefKind::Member => {
-                    if let Some(&last) = raw_ref.path.last() {
-                        name_lists[origin.index()].push(last);
-                    }
-                }
-                RawRefKind::Ambient => {
-                    resolver.resolve_type_path(
-                        &raw_ref.path,
-                        origin,
-                        &context,
-                        &mut scratch,
-                        &mut edge_lists[origin.index()],
-                        &mut name_lists[origin.index()],
-                    );
-                    if raw_ref.path.len() == 1 {
-                        name_lists[origin.index()].push(raw_ref.path[0]);
-                    }
-                }
-                RawRefKind::ScanTarget => {
-                    // The generic argument itself is already a Type reference
-                    // (emitted by the generic-name walk); here we only record
-                    // which in-source types are reflection-scan contracts.
-                    let mut targets = Vec::new();
-                    let mut discard = Vec::new();
-                    resolver.resolve_type_path(
-                        &raw_ref.path,
-                        origin,
-                        &context,
-                        &mut scratch,
-                        &mut targets,
-                        &mut discard,
-                    );
-                    scan_targets.extend(targets);
-                }
-                RawRefKind::Attribute => {
-                    resolver.resolve_type_path(
-                        &raw_ref.path,
-                        origin,
-                        &context,
-                        &mut scratch,
-                        &mut edge_lists[origin.index()],
-                        &mut name_lists[origin.index()],
-                    );
-                    // [Authorize] → class AuthorizeAttribute.
-                    if let Some(&last) = raw_ref.path.last() {
-                        let with_suffix =
-                            rodeo.get_or_intern(format!("{}Attribute", rodeo.resolve(&last)));
-                        let mut suffixed: SmallVec<[Spur; 2]> = SmallVec::from_slice(&raw_ref.path);
-                        *suffixed.last_mut().expect("non-empty path") = with_suffix;
-                        resolver.resolve_type_path(
-                            &suffixed,
-                            origin,
-                            &context,
-                            &mut scratch,
-                            &mut edge_lists[origin.index()],
-                            &mut name_lists[origin.index()],
-                        );
-                    }
-                }
+        for (slot, list) in output.edges.into_iter().enumerate() {
+            if !list.is_empty() {
+                edge_lists[origin_of(slot).index()].extend(list);
             }
         }
+        for (slot, list) in output.names.into_iter().enumerate() {
+            if !list.is_empty() {
+                name_lists[origin_of(slot).index()].extend(list);
+            }
+        }
+        scan_targets.extend(output.scan_targets);
     }
 
     // Root every concrete type whose base closure reaches a scan target:
