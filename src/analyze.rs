@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use fixedbitset::FixedBitSet;
-use lasso::ThreadedRodeo;
+use crate::extract::Interner;
 use rustc_hash::FxHashSet;
 
 use crate::model::{
@@ -14,7 +14,7 @@ pub fn find_dead(
     resolution: &Resolution,
     reachable: &FixedBitSet,
     workspace: &Workspace,
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
     elapsed: Duration,
     notes: Vec<String>,
 ) -> AnalysisResult {
