@@ -19,7 +19,7 @@ pub enum TestFramework {
     Mstest,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DiscoveredProject {
     pub id: ProjectId,
     pub name: String,
@@ -58,7 +58,7 @@ impl DiscoveredProject {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SourceFile {
     pub id: FileId,
     pub path: PathBuf,
@@ -69,7 +69,7 @@ pub struct SourceFile {
 }
 
 /// Everything the discovery stage produces.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf,
     pub projects: Vec<DiscoveredProject>,

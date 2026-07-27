@@ -2,8 +2,8 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use globset::GlobSet;
 use crate::extract::Interner;
+use globset::GlobSet;
 use rustc_hash::FxHashMap;
 
 use crate::cli::HealthArgs;
@@ -15,8 +15,7 @@ use crate::model::{
 };
 use crate::resolve::{Resolution, SymbolFlags};
 use crate::{
-    baseline, churn, commands, config, coupling, discover, extract, graph, hotspot, report,
-    resolve, suppress,
+    baseline, churn, commands, config, coupling, extract, graph, hotspot, report, resolve, suppress,
 };
 
 pub struct Analysis {
@@ -87,20 +86,42 @@ fn analyze_inner(
     ignore: Option<(&[String], &Path)>,
     baseline: Option<&Path>,
 ) -> anyhow::Result<Analysis> {
-    let start = Instant::now();
+    let extracted = commands::Extracted::build(root)?;
 
-    let mut workspace = discover::discover(root)?;
-    let rodeo = crate::extract::new_interner();
-    let facts = extract::extract_all(&workspace.files, &rodeo);
-    let mut resolution = resolve::build_symbols(&workspace.files, &facts, &rodeo);
-    let symbol_graph = graph::build_graph(&mut resolution, &workspace, &facts, &rodeo);
+    analyze_extracted(
+        &extracted,
+        extracted.started,
+        thresholds,
+        hotspots,
+        ignore,
+        baseline,
+    )
+}
+
+/// The pipeline from the symbol table onward, over an extraction a caller may
+/// already have built. `check` shares one with `dead-code`, which is where the
+/// parse cost is paid.
+pub(crate) fn analyze_extracted(
+    extracted: &commands::Extracted,
+    start: Instant,
+    thresholds: Thresholds,
+    hotspots: Option<usize>,
+    ignore: Option<(&[String], &Path)>,
+    baseline: Option<&Path>,
+) -> anyhow::Result<Analysis> {
+    let mut workspace = extracted.workspace.clone();
+    let rodeo = &extracted.rodeo;
+    let facts = &extracted.facts;
+
+    let mut resolution = resolve::build_symbols(&workspace.files, facts, rodeo);
+    let symbol_graph = graph::build_graph(&mut resolution, &workspace, facts, rodeo);
 
     let (mut findings, mut cycles) = collect_findings(
         &resolution,
         &symbol_graph,
         &workspace,
-        &facts,
-        &rodeo,
+        facts,
+        rodeo,
         thresholds,
     );
 
@@ -122,7 +143,7 @@ fn analyze_inner(
 
     if let Some(top) = hotspots {
         let (hotspots, walked, mut warnings) =
-            collect_hotspots(&workspace, &facts, top, ignore_set.as_ref(), thresholds)?;
+            collect_hotspots(&workspace, facts, top, ignore_set.as_ref(), thresholds)?;
         ranked = hotspots;
         commits_walked = Some(walked);
         workspace.warnings.append(&mut warnings);
@@ -643,6 +664,18 @@ fn summarize(
 /// one, so the recorded file describes the codebase rather than whatever the
 /// previous baseline left over.
 pub(crate) fn execute(context: &Context, args: &HealthArgs) -> anyhow::Result<Analysis> {
+    let extracted = commands::Extracted::build(&context.root)?;
+
+    execute_extracted(context, args, &extracted)
+}
+
+/// `execute` over an extraction the caller already built, so `check` can share
+/// one with `dead-code`.
+pub(crate) fn execute_extracted(
+    context: &Context,
+    args: &HealthArgs,
+    extracted: &commands::Extracted,
+) -> anyhow::Result<Analysis> {
     let health = context
         .config
         .as_ref()
@@ -673,8 +706,9 @@ pub(crate) fn execute(context: &Context, args: &HealthArgs) -> anyhow::Result<An
     );
 
     let hotspots = args.hotspots.then_some(args.top);
-    let mut analysis = analyze_inner(
-        &context.root,
+    let mut analysis = analyze_extracted(
+        extracted,
+        extracted.started,
         effective.into(),
         hotspots,
         context.ignore(),
