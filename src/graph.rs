@@ -672,3 +672,260 @@ pub fn mark_reachable(
 
     visited
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::extract::extract_source;
+    use crate::model::{FileId, SourceFile};
+    use crate::resolve;
+
+    /// Builds a workspace from in-memory sources and resolves it, so a test can
+    /// assert on the edges the resolver actually materialized.
+    ///
+    /// These tests exist because `resolve_type_path` ends in a safety valve:
+    /// when scoped resolution finds nothing it falls back to matching on simple
+    /// names alone. That valve makes broken FQN construction invisible to any
+    /// fixture where a simple name is unambiguous — every candidate misses, the
+    /// fallback fires, and the same symbols light up anyway. Every case below
+    /// therefore puts two same-named types in different namespaces, so the
+    /// precise answer and the fallback's answer differ.
+    struct Resolved {
+        resolution: Resolution,
+        graph: SymbolGraph,
+        rodeo: Interner,
+    }
+
+    impl Resolved {
+        fn build(sources: &[&str]) -> Self {
+            let rodeo = crate::extract::new_interner();
+            let files: Vec<SourceFile> = (0..sources.len())
+                .map(|index| SourceFile {
+                    id: FileId(index as u32),
+                    path: PathBuf::from(format!("File{index}.cs")),
+                    project: None,
+                    is_generated: false,
+                })
+                .collect();
+            let facts: Vec<FileFacts> = sources
+                .iter()
+                .enumerate()
+                .map(|(index, source)| {
+                    let mut facts = extract_source(source, &rodeo);
+                    facts.file = FileId(index as u32);
+                    facts
+                })
+                .collect();
+            let workspace = Workspace {
+                root: PathBuf::from("."),
+                projects: Vec::new(),
+                files,
+                warnings: Vec::new(),
+                missing_obj: false,
+            };
+
+            let mut resolution = resolve::build_symbols(&workspace.files, &facts, &rodeo);
+            let graph = build_graph(&mut resolution, &workspace, &facts, &rodeo);
+
+            Resolved {
+                resolution,
+                graph,
+                rodeo,
+            }
+        }
+
+        fn symbol(&self, fqn: &str) -> SymbolId {
+            let spur = self
+                .rodeo
+                .get(fqn)
+                .unwrap_or_else(|| panic!("{fqn} was never interned"));
+            let ids = self
+                .resolution
+                .types_by_fqn
+                .get(&spur)
+                .unwrap_or_else(|| panic!("no type declared as {fqn}"));
+
+            assert_eq!(ids.len(), 1, "{fqn} must name exactly one type");
+            ids[0]
+        }
+
+        /// True when any symbol declared in `from` has an edge to `to`.
+        fn references(&self, from: &str, to: &str) -> bool {
+            let target = self.symbol(to);
+            let source = self.symbol(from);
+            let reaches = |id: SymbolId| self.graph.edges_of(id).contains(&target);
+
+            reaches(source)
+                || self
+                    .resolution
+                    .symbols
+                    .iter()
+                    .filter(|symbol| symbol.parent == Some(source))
+                    .any(|symbol| reaches(symbol.id))
+        }
+    }
+
+    /// Two `Widget` types, one imported. Resolution through the using must
+    /// reach only the imported one — the fallback would light up both.
+    #[test]
+    fn a_using_selects_one_of_two_same_named_types() {
+        let resolved = Resolved::build(&[
+            "namespace App.A; public class Widget {}",
+            "namespace App.B; public class Widget {}",
+            "using App.A;\nnamespace App.Consumers;\npublic class Consumer { public void Run() { var widget = new Widget(); } }",
+        ]);
+
+        assert!(
+            resolved.references("App.Consumers.Consumer", "App.A.Widget"),
+            "the imported Widget must be referenced"
+        );
+        assert!(
+            !resolved.references("App.Consumers.Consumer", "App.B.Widget"),
+            "the Widget that was never imported must not be referenced"
+        );
+    }
+
+    /// The same discrimination, but reached through the origin's own namespace
+    /// rather than a using — this is what `namespace_of` feeds.
+    #[test]
+    fn an_enclosing_namespace_selects_one_of_two_same_named_types() {
+        let resolved = Resolved::build(&[
+            "namespace App.A; public class Widget {}",
+            "namespace App.B; public class Widget {}",
+            "namespace App.A;\npublic class Consumer { public void Run() { var widget = new Widget(); } }",
+        ]);
+
+        assert!(
+            resolved.references("App.A.Consumer", "App.A.Widget"),
+            "the Widget in the consumer's own namespace must be referenced"
+        );
+        assert!(
+            !resolved.references("App.A.Consumer", "App.B.Widget"),
+            "the Widget in a sibling namespace must not be referenced"
+        );
+    }
+
+    /// A namespace ancestor, not the leaf: `App.A.Deep` must still see
+    /// `App.A.Widget`, which only works if every ancestor prefix is probed.
+    #[test]
+    fn a_namespace_ancestor_prefix_still_resolves() {
+        let resolved = Resolved::build(&[
+            "namespace App.A; public class Widget {}",
+            "namespace Other.A; public class Widget {}",
+            "namespace App.A.Deep;\npublic class Consumer { public void Run() { var widget = new Widget(); } }",
+        ]);
+
+        assert!(
+            resolved.references("App.A.Deep.Consumer", "App.A.Widget"),
+            "an ancestor namespace of the origin must be probed"
+        );
+        assert!(
+            !resolved.references("App.A.Deep.Consumer", "Other.A.Widget"),
+            "an unrelated namespace must not be reached"
+        );
+    }
+
+    /// A fully-qualified reference names its target outright, with no using and
+    /// no shared namespace.
+    #[test]
+    fn a_fully_qualified_reference_selects_its_target() {
+        let resolved = Resolved::build(&[
+            "namespace App.A; public class Widget {}",
+            "namespace App.B; public class Widget {}",
+            "namespace Unrelated;\npublic class Consumer { public void Run() { var widget = new App.B.Widget(); } }",
+        ]);
+
+        assert!(
+            resolved.references("Unrelated.Consumer", "App.B.Widget"),
+            "the fully-qualified target must be referenced"
+        );
+        assert!(
+            !resolved.references("Unrelated.Consumer", "App.A.Widget"),
+            "the other Widget must not be referenced"
+        );
+    }
+
+    /// A nested type is reachable by its short name from inside its outer type,
+    /// which is the enclosing-type scope `lookup_joined` is handed first.
+    #[test]
+    fn an_enclosing_type_scope_selects_its_nested_type() {
+        let resolved = Resolved::build(&[
+            "namespace App.B; public class Inner {}",
+            "namespace App.A;\npublic class Outer { public class Inner {} public void Run() { var inner = new Inner(); } }",
+        ]);
+
+        assert!(
+            resolved.references("App.A.Outer", "App.A.Outer.Inner"),
+            "the nested Inner must be referenced from its outer type"
+        );
+        assert!(
+            !resolved.references("App.A.Outer", "App.B.Inner"),
+            "the unrelated Inner must not be referenced"
+        );
+    }
+
+    /// `using F = App.A.Widget;` then `F` — alias expansion feeds the same
+    /// candidate construction as everything above.
+    #[test]
+    fn a_using_alias_selects_its_target() {
+        let resolved = Resolved::build(&[
+            "namespace App.A; public class Widget {}",
+            "namespace App.B; public class Widget {}",
+            "using F = App.A.Widget;\nnamespace Unrelated;\npublic class Consumer { public void Run() { var widget = new F(); } }",
+        ]);
+
+        assert!(
+            resolved.references("Unrelated.Consumer", "App.A.Widget"),
+            "the alias target must be referenced"
+        );
+        assert!(
+            !resolved.references("Unrelated.Consumer", "App.B.Widget"),
+            "the other Widget must not be referenced"
+        );
+    }
+
+    /// A `global using` declared in one file must reach a consumer in another
+    /// that imports nothing itself. This is the only path through the
+    /// pre-rendered project/global using lists, which are built once per run
+    /// rather than per file.
+    #[test]
+    fn a_global_using_from_another_file_selects_its_namespace() {
+        let resolved = Resolved::build(&[
+            "namespace App.A; public class Widget {}",
+            "namespace App.B; public class Widget {}",
+            "global using App.A;",
+            "namespace Unrelated;\npublic class Consumer { public void Run() { var widget = new Widget(); } }",
+        ]);
+
+        assert!(
+            resolved.references("Unrelated.Consumer", "App.A.Widget"),
+            "the globally imported Widget must be referenced"
+        );
+        assert!(
+            !resolved.references("Unrelated.Consumer", "App.B.Widget"),
+            "the Widget outside the global using must not be referenced"
+        );
+    }
+
+    /// `[Authorize]` must reach `AuthorizeAttribute` — the suffixed probe, which
+    /// builds a second candidate path per attribute reference.
+    #[test]
+    fn an_attribute_reaches_the_suffixed_type() {
+        let resolved = Resolved::build(&[
+            "namespace App.A; public class AuthorizeAttribute : System.Attribute {}",
+            "namespace App.B; public class AuthorizeAttribute : System.Attribute {}",
+            "using App.A;\nnamespace Unrelated;\n[Authorize] public class Controller {}",
+        ]);
+
+        assert!(
+            resolved.references("Unrelated.Controller", "App.A.AuthorizeAttribute"),
+            "the imported AuthorizeAttribute must be referenced"
+        );
+        assert!(
+            !resolved.references("Unrelated.Controller", "App.B.AuthorizeAttribute"),
+            "the AuthorizeAttribute that was never imported must not be referenced"
+        );
+    }
+}
