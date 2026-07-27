@@ -1,5 +1,5 @@
-use lasso::Spur;
 use crate::extract::Interner;
+use lasso::Spur;
 use smallvec::{SmallVec, smallvec};
 use tree_sitter::Node;
 

@@ -1,6 +1,6 @@
+use crate::extract::Interner;
 use bitflags::bitflags;
 use lasso::Spur;
-use crate::extract::Interner;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -107,11 +107,7 @@ impl Resolution {
 /// duplicates collapse; members by (containing type, name, kind) — overloads
 /// and partial-method halves collapse. Merging unions modifiers/attributes,
 /// which only ever adds liveness exemptions (the safe direction).
-pub fn build_symbols(
-    files: &[SourceFile],
-    facts: &[FileFacts],
-    rodeo: &Interner,
-) -> Resolution {
+pub fn build_symbols(files: &[SourceFile], facts: &[FileFacts], rodeo: &Interner) -> Resolution {
     let mut symbols: Vec<Symbol> = Vec::new();
     let mut file_roots: Vec<SymbolId> = Vec::with_capacity(files.len());
     let mut types_by_fqn: FxHashMap<Spur, SmallVec<[SymbolId; 2]>> = FxHashMap::default();

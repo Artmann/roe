@@ -19,9 +19,23 @@ use crate::report;
 pub fn run(args: &CheckArgs) -> anyhow::Result<ExitCode> {
     let context = commands::resolve(&args.path, &args.config)?;
 
-    let dead_code_analysis = dead_code::execute(&context, &DeadCodeArgs::default())?;
+    // `dupes` runs first and alone. It is the one analysis that shares nothing
+    // with the others — it tokenizes rather than extracting facts, and filters
+    // generated files out of the workspace first — so running it before the
+    // shared extraction exists keeps its corpus out of the peak.
     let dupes_analysis = dupes::execute(&context, &DupesArgs::default())?;
-    let health_analysis = health::execute(&context, &HealthArgs::default())?;
+
+    // Discovery and parsing are identical work for the other two and dominate
+    // the run, so they happen once and both read the result. Scoped so the
+    // facts are freed before reporting.
+    let (dead_code_analysis, health_analysis) = {
+        let extracted = commands::Extracted::build(&context.root)?;
+
+        (
+            dead_code::execute_extracted(&context, &DeadCodeArgs::default(), &extracted)?,
+            health::execute_extracted(&context, &HealthArgs::default(), &extracted)?,
+        )
+    };
 
     // All three walked the same tree, so they produced the same discovery and
     // config warnings. Print each distinct one once rather than three times.

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use fixedbitset::FixedBitSet;
 use crate::extract::Interner;
+use fixedbitset::FixedBitSet;
 use rustc_hash::FxHashSet;
 
 use crate::model::{
