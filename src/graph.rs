@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 
 use fixedbitset::FixedBitSet;
-use lasso::{Spur, ThreadedRodeo};
+use lasso::Spur;
+use crate::extract::Interner;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -78,7 +79,7 @@ struct Scratch {
 /// Renders a `Spur` path as a dotted string into `buffer`, replacing its
 /// contents. A segment that interns to the empty string contributes no
 /// separator, matching how these names have always been joined.
-fn render_path_into(path: &[Spur], rodeo: &ThreadedRodeo, buffer: &mut String) {
+fn render_path_into(path: &[Spur], rodeo: &Interner, buffer: &mut String) {
     buffer.clear();
     for segment in path {
         if !buffer.is_empty() {
@@ -88,14 +89,14 @@ fn render_path_into(path: &[Spur], rodeo: &ThreadedRodeo, buffer: &mut String) {
     }
 }
 
-fn render_path(path: &[Spur], rodeo: &ThreadedRodeo) -> String {
+fn render_path(path: &[Spur], rodeo: &Interner) -> String {
     let mut buffer = String::new();
     render_path_into(path, rodeo, &mut buffer);
 
     buffer
 }
 
-fn render_paths(paths: &[Vec<Spur>], rodeo: &ThreadedRodeo) -> Vec<String> {
+fn render_paths(paths: &[Vec<Spur>], rodeo: &Interner) -> Vec<String> {
     paths.iter().map(|path| render_path(path, rodeo)).collect()
 }
 
@@ -106,7 +107,7 @@ pub fn build_graph(
     resolution: &mut Resolution,
     workspace: &Workspace,
     facts: &[FileFacts],
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
 ) -> SymbolGraph {
     let symbol_count = resolution.symbols.len();
     let mut edge_lists: Vec<Vec<SymbolId>> = vec![Vec::new(); symbol_count];
@@ -363,7 +364,7 @@ fn base_closure_hits(
 
 struct Resolver<'a> {
     resolution: &'a Resolution,
-    rodeo: &'a ThreadedRodeo,
+    rodeo: &'a Interner,
 }
 
 impl Resolver<'_> {

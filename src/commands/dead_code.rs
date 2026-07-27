@@ -2,8 +2,6 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use lasso::ThreadedRodeo;
-
 use crate::cli::DeadCodeArgs;
 use crate::commands::Context;
 use crate::model::{AnalysisResult, SymbolId, Workspace};
@@ -30,7 +28,7 @@ pub fn analyze(
     let start = Instant::now();
 
     let mut workspace = discover::discover(root)?;
-    let rodeo = ThreadedRodeo::default();
+    let rodeo = crate::extract::new_interner();
     let facts = extract::extract_all(&workspace.files, &rodeo);
 
     let mut resolution = resolve::build_symbols(&workspace.files, &facts, &rodeo);

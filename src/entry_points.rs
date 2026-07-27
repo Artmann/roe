@@ -1,4 +1,4 @@
-use lasso::ThreadedRodeo;
+use crate::extract::Interner;
 
 use crate::extract::FileFacts;
 use crate::model::{MemberKind, Modifiers, SymbolKind, Workspace};
@@ -51,7 +51,7 @@ pub fn mark_roots(
     facts: &[FileFacts],
     manual_roots: &[String],
     library_projects: &[String],
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
 ) -> Vec<String> {
     let mut notes = Vec::new();
 
@@ -194,7 +194,7 @@ pub fn mark_roots(
     notes
 }
 
-fn is_controller(symbol: &crate::resolve::Symbol, rodeo: &ThreadedRodeo) -> bool {
+fn is_controller(symbol: &crate::resolve::Symbol, rodeo: &Interner) -> bool {
     if !symbol.kind.is_type() {
         return false;
     }

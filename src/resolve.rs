@@ -1,5 +1,6 @@
 use bitflags::bitflags;
-use lasso::{Spur, ThreadedRodeo};
+use lasso::Spur;
+use crate::extract::Interner;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -84,7 +85,7 @@ pub struct Resolution {
 }
 
 impl Resolution {
-    pub fn display_name(&self, id: SymbolId, rodeo: &ThreadedRodeo) -> String {
+    pub fn display_name(&self, id: SymbolId, rodeo: &Interner) -> String {
         let symbol = &self.symbols[id.index()];
         if let Some(fqn) = symbol.fqn {
             return rodeo.resolve(&fqn).to_string();
@@ -109,7 +110,7 @@ impl Resolution {
 pub fn build_symbols(
     files: &[SourceFile],
     facts: &[FileFacts],
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
 ) -> Resolution {
     let mut symbols: Vec<Symbol> = Vec::new();
     let mut file_roots: Vec<SymbolId> = Vec::with_capacity(files.len());
@@ -288,7 +289,7 @@ fn intern_type_fqn(
     decl: &crate::extract::RawDecl,
     local_map: &[SymbolId],
     symbols: &[Symbol],
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
 ) -> Spur {
     let mut fqn = String::new();
     if let Some(parent_local) = decl.parent {

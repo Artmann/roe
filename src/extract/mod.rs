@@ -12,6 +12,19 @@ pub const FILE_ROOT: u32 = u32::MAX;
 
 pub type NamePath = SmallVec<[Spur; 2]>;
 
+/// The string interner shared by every phase.
+///
+/// Hashed with FxHash rather than lasso's default SipHash: graph construction
+/// probes the interner once per resolution candidate — millions of times on a
+/// large solution — and the hash itself was measurable in profiles.
+pub type Interner = ThreadedRodeo<Spur, rustc_hash::FxBuildHasher>;
+
+/// `Interner::default()` is unavailable once the hasher is not lasso's own,
+/// so construction goes through here.
+pub fn new_interner() -> Interner {
+    Interner::with_hasher(rustc_hash::FxBuildHasher)
+}
+
 #[derive(Debug)]
 pub struct RawDecl {
     pub name: Spur,
@@ -126,7 +139,7 @@ pub(crate) fn make_parser() -> tree_sitter::Parser {
 
 /// Parse and extract every file in parallel. One parser per rayon worker
 /// (tree-sitter parsers are Send but not Sync).
-pub fn extract_all(files: &[SourceFile], rodeo: &ThreadedRodeo) -> Vec<FileFacts> {
+pub fn extract_all(files: &[SourceFile], rodeo: &Interner) -> Vec<FileFacts> {
     files
         .par_iter()
         .map_init(make_parser, |parser, file| {
@@ -138,7 +151,7 @@ pub fn extract_all(files: &[SourceFile], rodeo: &ThreadedRodeo) -> Vec<FileFacts
 fn extract_file(
     parser: &mut tree_sitter::Parser,
     file: &SourceFile,
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
 ) -> FileFacts {
     let Ok(source) = std::fs::read(&file.path) else {
         let mut facts = FileFacts::empty(file.id, file.is_generated);
@@ -168,7 +181,7 @@ fn sniff_auto_generated(source: &[u8]) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) fn extract_source(source: &str, rodeo: &ThreadedRodeo) -> FileFacts {
+pub(crate) fn extract_source(source: &str, rodeo: &Interner) -> FileFacts {
     let mut parser = make_parser();
     let tree = parser.parse(source.as_bytes(), None).expect("parse");
     walk::extract(FileId(0), source.as_bytes(), tree.root_node(), rodeo)

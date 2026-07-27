@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use globset::GlobSet;
-use lasso::ThreadedRodeo;
+use crate::extract::Interner;
 use rustc_hash::FxHashMap;
 
 use crate::cli::HealthArgs;
@@ -90,7 +90,7 @@ fn analyze_inner(
     let start = Instant::now();
 
     let mut workspace = discover::discover(root)?;
-    let rodeo = ThreadedRodeo::default();
+    let rodeo = crate::extract::new_interner();
     let facts = extract::extract_all(&workspace.files, &rodeo);
     let mut resolution = resolve::build_symbols(&workspace.files, &facts, &rodeo);
     let symbol_graph = graph::build_graph(&mut resolution, &workspace, &facts, &rodeo);
@@ -259,7 +259,7 @@ fn collect_findings(
     symbol_graph: &graph::SymbolGraph,
     workspace: &Workspace,
     facts: &[extract::FileFacts],
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
     thresholds: Thresholds,
 ) -> (Vec<HealthFinding>, Vec<CircularDependency>) {
     let mut findings = Vec::new();
@@ -480,7 +480,7 @@ fn member_names(
     resolution: &Resolution,
     file_facts: &extract::FileFacts,
     local_map: &[SymbolId],
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
 ) -> Vec<String> {
     let mut names: Vec<String> = Vec::with_capacity(file_facts.decls.len());
 
@@ -541,7 +541,7 @@ fn takes_parameters(kind: SymbolKind) -> bool {
 fn cycle_member(
     resolution: &Resolution,
     workspace: &Workspace,
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
     id: SymbolId,
 ) -> CycleMember {
     let symbol = &resolution.symbols[id.index()];

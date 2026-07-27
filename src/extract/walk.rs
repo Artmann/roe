@@ -1,4 +1,5 @@
-use lasso::{Spur, ThreadedRodeo};
+use lasso::Spur;
+use crate::extract::Interner;
 use smallvec::{SmallVec, smallvec};
 use tree_sitter::Node;
 
@@ -10,7 +11,7 @@ use crate::model::{FileId, MemberKind, Modifiers, ParameterBreakdown, SymbolKind
 /// Reference collection is deliberately over-inclusive: an identifier we
 /// cannot classify still becomes an Ambient reference, because marking too
 /// much code as used only costs false negatives, never false positives.
-pub fn extract(file: FileId, source: &[u8], root: Node, rodeo: &ThreadedRodeo) -> FileFacts {
+pub fn extract(file: FileId, source: &[u8], root: Node, rodeo: &Interner) -> FileFacts {
     let mut walker = Walker {
         source,
         rodeo,
@@ -33,7 +34,7 @@ pub fn extract(file: FileId, source: &[u8], root: Node, rodeo: &ThreadedRodeo) -
 
 struct Walker<'a> {
     source: &'a [u8],
-    rodeo: &'a ThreadedRodeo,
+    rodeo: &'a Interner,
     facts: FileFacts,
     namespace_stack: Vec<Spur>,
     /// Indices into facts.decls for the enclosing declarations, innermost
@@ -1072,18 +1073,18 @@ fn has_default_value(parameter: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use lasso::ThreadedRodeo;
+    use crate::extract::Interner;
 
     use crate::extract::{FILE_ROOT, FileFacts, RawDecl, RawRefKind, extract_source};
     use crate::model::{MemberKind, Modifiers, SymbolKind, TypeKind};
 
-    fn extract(source: &str) -> (FileFacts, ThreadedRodeo) {
-        let rodeo = ThreadedRodeo::default();
+    fn extract(source: &str) -> (FileFacts, Interner) {
+        let rodeo = crate::extract::new_interner();
         let facts = extract_source(source, &rodeo);
         (facts, rodeo)
     }
 
-    fn decl_names(facts: &FileFacts, rodeo: &ThreadedRodeo) -> Vec<String> {
+    fn decl_names(facts: &FileFacts, rodeo: &Interner) -> Vec<String> {
         facts
             .decls
             .iter()
@@ -1091,7 +1092,7 @@ mod tests {
             .collect()
     }
 
-    fn ref_names(facts: &FileFacts, rodeo: &ThreadedRodeo) -> Vec<String> {
+    fn ref_names(facts: &FileFacts, rodeo: &Interner) -> Vec<String> {
         facts
             .refs
             .iter()
@@ -1490,7 +1491,7 @@ namespace Outer
         assert!(!facts.decls.is_empty());
     }
 
-    fn decl_named<'a>(facts: &'a FileFacts, rodeo: &ThreadedRodeo, name: &str) -> &'a RawDecl {
+    fn decl_named<'a>(facts: &'a FileFacts, rodeo: &Interner, name: &str) -> &'a RawDecl {
         facts
             .decls
             .iter()

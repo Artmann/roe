@@ -1,4 +1,4 @@
-use lasso::ThreadedRodeo;
+use crate::extract::Interner;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::model::{MemberKind, Modifiers, SymbolId, SymbolKind, Visibility, Workspace};
@@ -11,7 +11,7 @@ use crate::resolve::{Resolution, SymbolFlags};
 pub fn apply_kill_list(
     resolution: &mut Resolution,
     workspace: &Workspace,
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
     aggressive: bool,
 ) {
     let interface_member_names = interface_satisfaction_sets(resolution, rodeo);
@@ -142,7 +142,7 @@ struct SatisfactionSet {
 /// interface-satisfying, which is the safe direction.
 fn interface_satisfaction_sets(
     resolution: &Resolution,
-    rodeo: &ThreadedRodeo,
+    rodeo: &Interner,
 ) -> FxHashMap<SymbolId, SatisfactionSet> {
     // Member names per type (for interfaces).
     let mut members_of_type: FxHashMap<SymbolId, Vec<lasso::Spur>> = FxHashMap::default();
