@@ -35,10 +35,68 @@ impl SymbolGraph {
 }
 
 /// Per-file resolution context: namespace usings and aliases in scope.
-struct FileContext {
-    usings: Vec<Vec<Spur>>,
+///
+/// Usings are kept as pre-rendered dotted strings rather than `Spur` paths.
+/// Every reference in the file probes every using, so rendering them once per
+/// file — instead of re-resolving their segments through the interner for
+/// every reference — is where most of this phase's time used to go. Project
+/// globals are rendered once per project and borrowed, never cloned per file.
+struct FileContext<'a> {
+    local_usings: Vec<String>,
+    global_usings: &'a [String],
     aliases: FxHashMap<Spur, Vec<Spur>>,
     has_errors: bool,
+}
+
+impl FileContext<'_> {
+    fn using_prefixes(&self) -> impl Iterator<Item = &str> {
+        self.local_usings
+            .iter()
+            .map(String::as_str)
+            .chain(self.global_usings.iter().map(String::as_str))
+    }
+}
+
+/// Reusable buffers for candidate-FQN construction, owned by the per-file
+/// resolution loop and cleared between uses. Resolving one reference probes
+/// (enclosing types + namespace ancestors + usings) candidates, and building
+/// each one as a fresh `String` dominated the whole analysis.
+#[derive(Default)]
+struct Scratch {
+    /// The candidate FQN handed to the interner lookup.
+    fqn: String,
+    /// The reference's own dotted path — identical across every candidate for
+    /// a given reference, so rendered once.
+    path: String,
+    /// The origin's namespace, dotted, with `namespace_ends[k]` holding the
+    /// byte length of its first `k` segments so every ancestor prefix is a
+    /// subslice rather than a rebuild.
+    namespace: String,
+    namespace_ends: Vec<usize>,
+}
+
+/// Renders a `Spur` path as a dotted string into `buffer`, replacing its
+/// contents. A segment that interns to the empty string contributes no
+/// separator, matching how these names have always been joined.
+fn render_path_into(path: &[Spur], rodeo: &ThreadedRodeo, buffer: &mut String) {
+    buffer.clear();
+    for segment in path {
+        if !buffer.is_empty() {
+            buffer.push('.');
+        }
+        buffer.push_str(rodeo.resolve(segment));
+    }
+}
+
+fn render_path(path: &[Spur], rodeo: &ThreadedRodeo) -> String {
+    let mut buffer = String::new();
+    render_path_into(path, rodeo, &mut buffer);
+
+    buffer
+}
+
+fn render_paths(paths: &[Vec<Spur>], rodeo: &ThreadedRodeo) -> Vec<String> {
+    paths.iter().map(|path| render_path(path, rodeo)).collect()
 }
 
 /// Build reference edges by resolving every raw reference against the symbol
@@ -80,15 +138,31 @@ pub fn build_graph(
         }
     }
 
+    // Render the globals once here rather than per file: every file in a
+    // project sees the same list, and orphan files all see `all_globals`.
+    let project_global_strings: FxHashMap<ProjectId, Vec<String>> = project_globals
+        .iter()
+        .map(|(&project, globals)| (project, render_paths(globals, rodeo)))
+        .collect();
+    let all_global_strings = render_paths(&all_globals, rodeo);
+
     let resolver = Resolver {
         resolution: &*resolution,
         rodeo,
     };
+    let mut scratch = Scratch::default();
 
     for file_facts in facts {
         let file = &workspace.files[file_facts.file.index()];
+        // Files with a project see that project's globals; orphan files see
+        // every global (over-inclusion is safe).
+        let global_usings = match file.project.and_then(|p| project_global_strings.get(&p)) {
+            Some(globals) => globals.as_slice(),
+            None => all_global_strings.as_slice(),
+        };
         let mut context = FileContext {
-            usings: Vec::new(),
+            local_usings: Vec::new(),
+            global_usings,
             aliases: FxHashMap::default(),
             has_errors: file_facts.has_errors,
         };
@@ -100,14 +174,8 @@ pub fn build_graph(
                 Some(alias) => {
                     context.aliases.insert(alias, using.path.clone());
                 }
-                None => context.usings.push(using.path.clone()),
+                None => context.local_usings.push(render_path(&using.path, rodeo)),
             }
-        }
-        // Files with a project see that project's globals; orphan files see
-        // every global (over-inclusion is safe).
-        match file.project.and_then(|p| project_globals.get(&p)) {
-            Some(globals) => context.usings.extend(globals.iter().cloned()),
-            None => context.usings.extend(all_globals.iter().cloned()),
         }
 
         let local_map = &resolution.decl_map[file_facts.file.index()];
@@ -126,6 +194,7 @@ pub fn build_graph(
                         &raw_ref.path,
                         origin,
                         &context,
+                        &mut scratch,
                         &mut edge_lists[origin.index()],
                         &mut name_lists[origin.index()],
                     );
@@ -140,6 +209,7 @@ pub fn build_graph(
                         &raw_ref.path,
                         origin,
                         &context,
+                        &mut scratch,
                         &mut edge_lists[origin.index()],
                         &mut name_lists[origin.index()],
                     );
@@ -157,6 +227,7 @@ pub fn build_graph(
                         &raw_ref.path,
                         origin,
                         &context,
+                        &mut scratch,
                         &mut targets,
                         &mut discard,
                     );
@@ -167,6 +238,7 @@ pub fn build_graph(
                         &raw_ref.path,
                         origin,
                         &context,
+                        &mut scratch,
                         &mut edge_lists[origin.index()],
                         &mut name_lists[origin.index()],
                     );
@@ -180,6 +252,7 @@ pub fn build_graph(
                             &suffixed,
                             origin,
                             &context,
+                            &mut scratch,
                             &mut edge_lists[origin.index()],
                             &mut name_lists[origin.index()],
                         );
@@ -306,6 +379,7 @@ impl Resolver<'_> {
         path: &[Spur],
         origin: SymbolId,
         context: &FileContext,
+        scratch: &mut Scratch,
         edges: &mut Vec<SymbolId>,
         member_names: &mut Vec<Spur>,
     ) {
@@ -322,25 +396,50 @@ impl Resolver<'_> {
         });
         let path: &[Spur] = expanded.as_deref().unwrap_or(path);
 
+        // Destructured so the prefix source and the candidate buffer can be
+        // borrowed at the same time.
+        let Scratch {
+            fqn,
+            path: path_text,
+            namespace: namespace_text,
+            namespace_ends,
+        } = scratch;
+
+        // The path half of every candidate below is the same string, so it is
+        // rendered once here instead of once per candidate.
+        render_path_into(path, self.rodeo, path_text);
+
         // 1. Enclosing type scope (nested types).
         let mut enclosing = self.enclosing_type_of(origin);
         while let Some(type_id) = enclosing {
             let symbol = &self.resolution.symbols[type_id.index()];
-            if let Some(fqn) = symbol.fqn {
-                found |= self.try_candidate(Some(fqn), path, edges);
+            if let Some(prefix) = symbol.fqn {
+                found |= self.lookup_joined(self.rodeo.resolve(&prefix), path_text, fqn, edges);
             }
             enclosing = symbol.parent;
         }
 
-        // 2. Namespace ancestors, including the bare path.
+        // 2. Namespace ancestors, including the bare path. Rendered once with
+        // per-segment end offsets so each ancestor prefix is a subslice.
         let namespace = self.namespace_of(origin);
+        namespace_text.clear();
+        namespace_ends.clear();
+        namespace_ends.push(0);
+        for segment in namespace {
+            if !namespace_text.is_empty() {
+                namespace_text.push('.');
+            }
+            namespace_text.push_str(self.rodeo.resolve(segment));
+            namespace_ends.push(namespace_text.len());
+        }
         for prefix_len in (0..=namespace.len()).rev() {
-            found |= self.try_prefixed(&namespace[..prefix_len], path, edges);
+            let prefix = &namespace_text[..namespace_ends[prefix_len]];
+            found |= self.lookup_joined(prefix, path_text, fqn, edges);
         }
 
         // 3. Usings.
-        for using in &context.usings {
-            found |= self.try_prefixed(using, path, edges);
+        for using in context.using_prefixes() {
+            found |= self.lookup_joined(using, path_text, fqn, edges);
         }
 
         if !found || context.has_errors {
@@ -359,33 +458,26 @@ impl Resolver<'_> {
         }
     }
 
-    fn try_prefixed(&self, prefix: &[Spur], path: &[Spur], edges: &mut Vec<SymbolId>) -> bool {
-        let mut fqn = String::new();
-        for segment in prefix.iter().chain(path.iter()) {
-            if !fqn.is_empty() {
-                fqn.push('.');
-            }
-            fqn.push_str(self.rodeo.resolve(segment));
-        }
-        self.lookup_fqn(&fqn, edges)
-    }
-
-    fn try_candidate(
+    /// Joins an already-rendered prefix and path into `buffer` and looks the
+    /// result up. `buffer` is reused across every candidate — building it
+    /// fresh each time was the single hottest allocation in the analysis.
+    fn lookup_joined(
         &self,
-        prefix_fqn: Option<Spur>,
-        path: &[Spur],
+        prefix: &str,
+        path: &str,
+        buffer: &mut String,
         edges: &mut Vec<SymbolId>,
     ) -> bool {
-        let mut fqn = prefix_fqn
-            .map(|f| self.rodeo.resolve(&f).to_string())
-            .unwrap_or_default();
-        for segment in path {
-            if !fqn.is_empty() {
-                fqn.push('.');
+        buffer.clear();
+        if !prefix.is_empty() {
+            buffer.push_str(prefix);
+            if !path.is_empty() {
+                buffer.push('.');
             }
-            fqn.push_str(self.rodeo.resolve(segment));
         }
-        self.lookup_fqn(&fqn, edges)
+        buffer.push_str(path);
+
+        self.lookup_fqn(buffer, edges)
     }
 
     fn lookup_fqn(&self, fqn: &str, edges: &mut Vec<SymbolId>) -> bool {
@@ -409,16 +501,16 @@ impl Resolver<'_> {
         }
     }
 
-    fn namespace_of(&self, origin: SymbolId) -> Vec<Spur> {
+    fn namespace_of(&self, origin: SymbolId) -> &[Spur] {
         let mut current = Some(origin);
         while let Some(id) = current {
             let symbol = &self.resolution.symbols[id.index()];
             if symbol.kind.is_type() {
-                return symbol.namespace.to_vec();
+                return &symbol.namespace;
             }
             current = symbol.parent;
         }
-        Vec::new()
+        &[]
     }
 }
 
