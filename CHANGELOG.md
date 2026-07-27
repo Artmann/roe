@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.1](https://github.com/Artmann/roe/compare/roe-v1.3.0...roe-v1.3.1) (2026-07-27)
+
+
+### Performance Improvements
+
+* **check:** Share discovery and extraction across analyses ([b403ea4](https://github.com/Artmann/roe/commit/b403ea467e4cb4bffaeef63ff805d70fd86a8387))
+* **dead-code:** Hash interned strings with FxHash instead of SipHash ([a1809fa](https://github.com/Artmann/roe/commit/a1809fa81de33a3111f5a4c059a0d7a92bb9eca6))
+* **dead-code:** Resolve reference edges in parallel ([fe4f258](https://github.com/Artmann/roe/commit/fe4f2582562d38fb9004935f8d4337804e3d3962))
+* **dead-code:** Reuse a scratch buffer when building candidate FQNs ([a0a175f](https://github.com/Artmann/roe/commit/a0a175f0cbbdc10863a8820004d92f35c871de50))
+
 ## [1.3.0](https://github.com/Artmann/roe/compare/roe-v1.2.0...roe-v1.3.0) (2026-07-26)
 
 
