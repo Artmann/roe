@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/Artmann/roe/compare/roe-v1.3.1...roe-v1.4.0) (2026-08-02)
+
+
+### Features
+
+* **config:** Add per-analysis ignore globs for dupes, health, and dead-code ([3443072](https://github.com/Artmann/roe/commit/34430729a3deb61082ae9b97fe368b230bc53c71)), closes [#32](https://github.com/Artmann/roe/issues/32)
+* **dupes:** Read thresholds and mode from the config file ([6c0053c](https://github.com/Artmann/roe/commit/6c0053c2e88ae542c888fffdc6b42103a56bcb45)), closes [#31](https://github.com/Artmann/roe/issues/31)
+
 ## [1.3.1](https://github.com/Artmann/roe/compare/roe-v1.3.0...roe-v1.3.1) (2026-07-27)
 
 
