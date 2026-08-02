@@ -92,7 +92,8 @@ code style guide.
    groups, non-maximal submatches (a truncated prefix of a longer repeat
    reported elsewhere) are dropped, and the rest are filtered by
    `--min-tokens`, `--min-lines` (using the shortest span across a group's
-   occurrences), and `--min-occurrences`.
+   occurrences), and `--min-occurrences` — each falling back to the config
+   file's `dupes` block before its built-in default.
 4. **Report** — surviving groups are sorted by size (tokens, then occurrence
    count) so the most impactful duplication surfaces first.
 

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::Deserialize;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -226,7 +227,11 @@ pub enum OutputFormat {
     Json,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+/// `Deserialize` uses the same lowercase names clap exposes on the CLI, so a
+/// config file's `"mode": "semantic"` and `--mode semantic` accept identical
+/// strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DupeMode {
     /// Exact token match — only verbatim copy-pasted blocks match.
     Exact,
@@ -244,27 +249,33 @@ pub struct DupesArgs {
     #[arg(long, short = 'f', value_enum, default_value_t = OutputFormat::Human)]
     pub format: OutputFormat,
 
-    /// Matching mode
-    #[arg(long, value_enum, default_value_t = DupeMode::Exact)]
-    pub mode: DupeMode,
+    // The tunables are Option rather than clap defaults for the same reason
+    // `HealthArgs`' thresholds are: with `default_value_t` there is no way to
+    // tell "the user asked for exact" from "nobody said anything", so a
+    // `dupes` block in roe.json could never take effect. The defaults live in
+    // `impl Default for config::EffectiveDupes` and are spelled out in the
+    // help text below instead.
+    /// Matching mode [default: exact]
+    #[arg(long, value_enum)]
+    pub mode: Option<DupeMode>,
 
     /// Hide the duplicated source code printed under each group (human format
     /// only)
     #[arg(long)]
     pub no_code: bool,
 
-    /// Minimum token-run length for a match to be reported
-    #[arg(long, default_value_t = 50)]
-    pub min_tokens: u32,
+    /// Minimum token-run length for a match to be reported [default: 50]
+    #[arg(long)]
+    pub min_tokens: Option<u32>,
 
     /// Minimum line span (of the shortest occurrence) for a match to be
-    /// reported
-    #[arg(long, default_value_t = 5)]
-    pub min_lines: u32,
+    /// reported [default: 5]
+    #[arg(long)]
+    pub min_lines: Option<u32>,
 
-    /// Minimum number of occurrences for a match to be reported
-    #[arg(long, default_value_t = 2)]
-    pub min_occurrences: u32,
+    /// Minimum number of occurrences for a match to be reported [default: 2]
+    #[arg(long)]
+    pub min_occurrences: Option<u32>,
 
     /// Path to an explicit roe.json/roe.yaml/roe.yml config (skips
     /// auto-discovery)
@@ -277,11 +288,11 @@ impl Default for DupesArgs {
         DupesArgs {
             path: None,
             format: OutputFormat::Human,
-            mode: DupeMode::Exact,
+            mode: None,
             no_code: false,
-            min_tokens: 50,
-            min_lines: 5,
-            min_occurrences: 2,
+            min_tokens: None,
+            min_lines: None,
+            min_occurrences: None,
             config: None,
         }
     }

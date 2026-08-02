@@ -1,6 +1,5 @@
 use serde::Serialize;
 
-use crate::cli::DupeMode;
 use crate::commands::{dead_code, dupes, health};
 use crate::report;
 
@@ -18,17 +17,12 @@ struct JsonReport<'a> {
     health: report::health::json::JsonReport,
 }
 
-pub fn print(
-    dead_code: &dead_code::Analysis,
-    dupes: &dupes::Analysis,
-    health: &health::Analysis,
-    mode: DupeMode,
-) {
+pub fn print(dead_code: &dead_code::Analysis, dupes: &dupes::Analysis, health: &health::Analysis) {
     let report = JsonReport {
         version: 1,
         root: crate::paths::display(&dead_code.workspace.root),
         dead_code: report::json::build(&dead_code.result, &dead_code.workspace),
-        dupes: report::dupes::json::build(&dupes.result, &dupes.workspace, mode),
+        dupes: report::dupes::json::build(&dupes.result, &dupes.workspace, dupes.mode),
         health: report::health::json::build(&health.result, &health.workspace),
     };
 

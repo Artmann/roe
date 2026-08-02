@@ -34,6 +34,12 @@ found 1 duplicate group · 48 duplicated lines — 1 project(s), 214 file(s) sca
 | `--min-occurrences <N>` | Minimum number of occurrences for a match to be reported. Defaults to `2`. |
 | `--config <PATH>` | Use this `roe.json`/`roe.yaml`/`roe.yml` instead of [auto-discovery](/configuration). |
 
+`--mode`, `--min-tokens`, `--min-lines`, and `--min-occurrences` fall back to
+the `dupes` block of a [config file](/configuration) before their built-in
+defaults, so a calibration is committed once instead of repeated on every
+invocation. That block is also how a combined [`roe check`](/commands/check)
+run, which takes no dupes flags, picks the calibration up.
+
 ## Exact vs. semantic mode
 
 By default, `roe dupes` only matches code that's identical token-for-token.

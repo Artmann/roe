@@ -8,8 +8,11 @@ use crate::model::{DupesResult, DupesSummary, Workspace};
 use crate::{clone_extraction, commands, config, discover, report, tokenize};
 
 pub struct Analysis {
-    pub workspace: Workspace,
+    /// The mode this analysis actually ran with — after config merging, so
+    /// reports state the truth rather than a flag's default.
+    pub mode: DupeMode,
     pub result: DupesResult,
+    pub workspace: Workspace,
 }
 
 /// The full dupes pipeline: discover → tokenize → suffix array + LCP →
@@ -57,7 +60,11 @@ fn analyze_with_ignores(
     let groups = clone_extraction::extract_groups(&corpus, min_tokens, min_lines, min_occurrences);
     let result = build_result(groups, &workspace, start.elapsed());
 
-    Ok(Analysis { workspace, result })
+    Ok(Analysis {
+        mode,
+        result,
+        workspace,
+    })
 }
 
 fn build_result(
@@ -83,13 +90,31 @@ fn build_result(
 
 /// The analysis half of `run`. Prints nothing and decides no exit code, so
 /// `check` can run it alongside the other two analyses.
+///
+/// The mode and thresholds resolve here — an explicit flag wins, then the
+/// config file's `dupes` block, then the built-in default — which is what
+/// lets a flagless `check` invocation pick up a committed calibration.
 pub(crate) fn execute(context: &Context, args: &DupesArgs) -> anyhow::Result<Analysis> {
+    let dupes_config = context
+        .config
+        .as_ref()
+        .and_then(|resolved| resolved.config.dupes.as_ref());
+    let effective = config::merge_dupes(
+        dupes_config,
+        config::DupesOverrides {
+            min_lines: args.min_lines,
+            min_occurrences: args.min_occurrences,
+            min_tokens: args.min_tokens,
+            mode: args.mode,
+        },
+    );
+
     let mut analysis = analyze_with_ignores(
         &context.root,
-        args.mode,
-        args.min_tokens,
-        args.min_lines,
-        args.min_occurrences,
+        effective.mode,
+        effective.min_tokens,
+        effective.min_lines,
+        effective.min_occurrences,
         context.ignore(),
     )?;
     analysis
@@ -112,7 +137,7 @@ pub fn run(args: &DupesArgs) -> anyhow::Result<ExitCode> {
         &analysis.result,
         &analysis.workspace,
         args.format,
-        args.mode,
+        analysis.mode,
         !args.no_code,
     ))
 }
