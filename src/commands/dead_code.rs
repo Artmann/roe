@@ -121,13 +121,11 @@ pub(crate) fn execute_extracted(
         .warnings
         .extend(context.warnings.iter().cloned());
 
-    if let Some(resolved) = &context.config
-        && let Some(ignore) = &resolved.config.ignore
-    {
+    if let Some((patterns, dir)) = context.ignore_for(commands::Analysis::DeadCode) {
         suppress::apply_config_ignores(
             &mut analysis.result,
-            ignore,
-            &resolved.dir,
+            &patterns,
+            dir,
             &mut analysis.workspace.warnings,
         );
     }

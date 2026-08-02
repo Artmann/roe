@@ -109,6 +109,44 @@ fn config_ignore_yaml_filters_out_ignored_folder() {
 }
 
 #[test]
+fn dead_code_scoped_ignore_json_drops_findings_in_matching_files() {
+    let output = roe()
+        .args(["dead-code", &fixture("dead_code_scoped_ignore_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("StillDead"), "got {stdout}");
+    assert!(!stdout.contains("Handlers"), "got {stdout}");
+}
+
+#[test]
+fn dead_code_scoped_ignore_yaml_drops_findings_in_matching_files() {
+    let output = roe()
+        .args(["dead-code", &fixture("dead_code_scoped_ignore_yaml")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("StillDead"), "got {stdout}");
+    assert!(!stdout.contains("Handlers"), "got {stdout}");
+}
+
+/// The scoped list must not leak into the other analyses: the ignored
+/// handler's duplicate occurrence still counts.
+#[test]
+fn dead_code_scoped_ignore_leaves_dupes_findings_alone() {
+    let output = roe()
+        .args(["dupes", &fixture("dead_code_scoped_ignore_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("found 1 duplicate group"), "got {stdout}");
+    assert!(stdout.contains("PingHandler.cs"), "got {stdout}");
+}
+
+#[test]
 fn config_resolution_walks_up_to_parent_directory() {
     // roe.json lives at the fixture root; --path points at a nested
     // subdirectory, so the ignore glob (relative to the config file's own
@@ -293,6 +331,65 @@ fn dupes_config_ignore_yaml_drops_the_ignored_occurrence() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("no duplicate code found"));
+}
+
+#[test]
+fn dupes_scoped_ignore_json_drops_the_duplicate() {
+    // `Legacy/` comes from `dupes.ignore` and `Vendor/` from the top-level
+    // list; only their union leaves a single occurrence, which is below the
+    // occurrence threshold.
+    let output = roe()
+        .args(["dupes", &fixture("dupes_scoped_ignore_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"), "got {stdout}");
+}
+
+#[test]
+fn dupes_scoped_ignore_yaml_drops_the_duplicate() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_scoped_ignore_yaml")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"), "got {stdout}");
+}
+
+/// The acceptance criterion of the scoped-ignore feature: suppressing an
+/// intentional duplicate must not cost the file its dead-code coverage.
+#[test]
+fn dupes_scoped_ignore_leaves_dead_code_findings_alone() {
+    let output = roe()
+        .args(["dead-code", &fixture("dupes_scoped_ignore_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Legacy/OldShippingService.cs"),
+        "got {stdout}"
+    );
+    // The top-level list still applies to every command.
+    assert!(!stdout.contains("Vendor"), "got {stdout}");
+}
+
+#[test]
+fn dupes_scoped_ignore_leaves_health_findings_alone() {
+    let output = roe()
+        .args([
+            "health",
+            &fixture("dupes_scoped_ignore_json"),
+            "--max-complexity",
+            "2",
+        ])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("OldShippingService"), "got {stdout}");
 }
 
 #[test]
@@ -833,6 +930,69 @@ fn health_ignore_globs_drop_findings_and_the_cycles_they_touch() {
     );
 }
 
+#[test]
+fn health_scoped_ignore_drops_findings_and_counts_the_exclusion() {
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_scoped_ignore"),
+            "--format",
+            "json",
+            "--max-complexity",
+            "2",
+        ])
+        .output()
+        .expect("command runs");
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    let names: Vec<&str> = parsed["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .filter_map(|finding| finding["name"].as_str())
+        .collect();
+    assert_eq!(names, vec!["Lib.KeptWidget.Branchy"], "got {stdout}");
+
+    let summary = &parsed["summary"];
+    assert_eq!(summary["filesScanned"], 1, "got {stdout}");
+    assert_eq!(summary["excluded"]["ignoredFiles"], 1, "got {stdout}");
+}
+
+#[test]
+fn health_scoped_ignore_shows_in_the_footer() {
+    let output = roe()
+        .args([
+            "health",
+            &fixture("health_scoped_ignore"),
+            "--max-complexity",
+            "2",
+        ])
+        .output()
+        .expect("command runs");
+
+    let stdout = normalize(&output.stdout);
+
+    assert!(
+        stdout.contains("excluded: 1 ignored file"),
+        "the footer must count what the scoped glob dropped, got:\n{stdout}"
+    );
+}
+
+/// The scoped list must not leak into the other analyses: the health-ignored
+/// file's dead code is still reported.
+#[test]
+fn health_scoped_ignore_leaves_dead_code_findings_alone() {
+    let output = roe()
+        .args(["dead-code", &fixture("health_scoped_ignore")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Lib/Ignored.cs"), "got {stdout}");
+}
+
 /// A writable path for a baseline the test owns. `CARGO_TARGET_TMPDIR` is
 /// per-crate and cleaned by `cargo clean`, so nothing leaks into the fixtures.
 fn scratch(name: &str) -> std::path::PathBuf {
@@ -1162,6 +1322,24 @@ fn check_reads_the_dupes_config_for_the_combined_run() {
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("duplicate group"), "got {stdout}");
+}
+
+/// One shared context feeds all three analyses, so each must apply its own
+/// scoped list on top of the top-level one.
+#[test]
+fn check_applies_scoped_ignores_per_analysis() {
+    let output = roe()
+        .args([&fixture("dupes_scoped_ignore_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"), "got {stdout}");
+    assert!(
+        stdout.contains("Legacy/OldShippingService.cs"),
+        "got {stdout}"
+    );
+    assert!(!stdout.contains("Vendor"), "got {stdout}");
 }
 
 /// The combined JSON report must state the mode that actually ran, not a

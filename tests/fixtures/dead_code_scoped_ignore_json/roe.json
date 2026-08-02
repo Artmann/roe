@@ -1,0 +1,5 @@
+{
+  "deadCode": {
+    "ignore": ["Handlers/"]
+  }
+}

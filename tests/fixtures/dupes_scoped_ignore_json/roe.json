@@ -1,0 +1,6 @@
+{
+  "ignore": ["Vendor/"],
+  "dupes": {
+    "ignore": ["Legacy/"]
+  }
+}

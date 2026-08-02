@@ -706,12 +706,15 @@ pub(crate) fn execute_extracted(
     );
 
     let hotspots = args.hotspots.then_some(args.top);
+    let ignore = context.ignore_for(commands::Analysis::Health);
     let mut analysis = analyze_extracted(
         extracted,
         extracted.started,
         effective.into(),
         hotspots,
-        context.ignore(),
+        ignore
+            .as_ref()
+            .map(|(patterns, dir)| (patterns.as_slice(), *dir)),
         baseline.as_deref(),
     )?;
     analysis

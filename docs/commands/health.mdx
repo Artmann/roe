@@ -115,8 +115,8 @@ or a `??` whose fallback contains a ternary is counted on its own merits.
 The footer's `N project(s), N file(s), N symbol(s) scanned` counts what was
 *eligible to be reported*, not what was parsed. Anything ruled out up front —
 test projects under `--exclude-tests`, files matched by the config's
-[`ignore` globs](/configuration) — is subtracted, and named on a line of its
-own:
+[`ignore` globs](/configuration) (top-level or `health.ignore`) — is
+subtracted, and named on a line of its own:
 
 ```text
 found 8 issues across 7 locations in 6 files — 2 project(s), 118 file(s), 1204 symbol(s) scanned in 153 ms
@@ -398,5 +398,6 @@ public void ParseEverything(string input)
 ```
 
 Circular dependencies span multiple files, so — like duplicates — they have
-no inline comment. Use the `ignore` globs in a
-[config file](/configuration) instead.
+no inline comment. Use ignore globs in a [config file](/configuration)
+instead — `health.ignore` scopes the suppression to health alone, so the
+file keeps its dead-code and dupes coverage.
