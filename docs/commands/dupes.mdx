@@ -56,6 +56,16 @@ roe dupes --mode semantic path/to/solution
 ## Ignoring files
 
 Duplicates span multiple files, so there's no inline suppression comment for
-them. Instead, use the `ignore` glob list in a
-[config file](/configuration) — it applies to every command, dropping every
-finding in matching files.
+them. Instead, use ignore globs in a [config file](/configuration): the
+top-level `ignore` list applies to every command, and the `dupes.ignore`
+list adds patterns only the duplicate analysis honours — so accepting an
+intentional duplicate doesn't cost the file its dead-code and health
+coverage.
+
+```json roe.json
+{
+  "dupes": {
+    "ignore": ["**/InsurerUnionQuery.cs"]
+  }
+}
+```

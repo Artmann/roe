@@ -442,11 +442,15 @@ walking up from the analysis root to the nearest directory containing one
   "roots": ["MyApp.Program.Main"],
   "libraryProjects": ["MyLib"],
   "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"],
+  "deadCode": {
+    "ignore": ["Plugins/**"]
+  },
   "dupes": {
     "mode": "semantic",
     "minTokens": 100,
     "minLines": 10,
-    "minOccurrences": 2
+    "minOccurrences": 2,
+    "ignore": ["**/InsurerUnionQuery.cs"]
   },
   "health": {
     "maxComplexity": 15,
@@ -469,7 +473,11 @@ explicit `--aggressive`, `--root`, or `--library` always wins, otherwise the
 config's value applies, otherwise the built-in default (`false` / no extra
 roots / no extra library projects). The same `ignore` list also applies to
 `roe dupes`, since a duplicate spans multiple files and doesn't map cleanly
-onto a single-line inline suppression comment.
+onto a single-line inline suppression comment. Each command's section takes
+an `ignore` list of its own with the same rules, unioned with the top-level
+one and applied only to that command — so accepting an intentional duplicate
+through `dupes.ignore` doesn't cost the file its dead-code and health
+coverage.
 
 The `dupes` block sets defaults for `roe dupes`' matching mode and
 thresholds, and the `health` block does the same for `roe health`'s

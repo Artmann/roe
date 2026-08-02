@@ -8,3 +8,5 @@ extend-exclude = ["Cargo.lock", "tests/fixtures/", "tests/snapshots/"]
 # `rejects_unknown_fields` in src/config.rs to prove serde rejects near-miss
 # keys instead of silently ignoring them.
 agressive = "agressive"
+# Same idea for the `ignore` field, used by `rejects_unknown_dead_code_fields`.
+ignor = "ignor"

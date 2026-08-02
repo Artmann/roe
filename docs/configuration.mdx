@@ -27,11 +27,15 @@ error.
   "roots": ["MyApp.Program.Main"],
   "libraryProjects": ["MyLib"],
   "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"],
+  "deadCode": {
+    "ignore": ["Plugins/**"]
+  },
   "dupes": {
     "mode": "semantic",
     "minTokens": 100,
     "minLines": 10,
-    "minOccurrences": 2
+    "minOccurrences": 2,
+    "ignore": ["**/InsurerUnionQuery.cs"]
   },
   "health": {
     "maxComplexity": 15,
@@ -41,7 +45,8 @@ error.
     "maxFileLines": 750,
     "maxTypeMembers": 25,
     "excludeTests": true,
-    "baseline": "roe-baseline.json"
+    "baseline": "roe-baseline.json",
+    "ignore": ["**/GeneratedModels.cs"]
   }
 }
 ```
@@ -51,9 +56,10 @@ error.
 | `aggressive` | boolean | Also flag enum members and public settable auto-properties. Default for the `--aggressive` flag. |
 | `roots` | string[] | Fully-qualified symbol names to treat as extra entry-point roots. Default for `--root`. |
 | `libraryProjects` | string[] | Project names to always treat in library mode (public API counts as used). Default for `--library`. |
-| `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to all three commands. |
-| `dupes` | object | Matching mode and thresholds for [`roe dupes`](/commands/dupes). Every key is optional. |
-| `health` | object | Thresholds and the baseline path for [`roe health`](/commands/health). Every key is optional. |
+| `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to all three commands; each command's section can add its own. |
+| `deadCode` | object | Extra `ignore` globs applied only to [`roe dead-code`](/commands/dead-code). |
+| `dupes` | object | Matching mode, thresholds, and extra `ignore` globs for [`roe dupes`](/commands/dupes). Every key is optional. |
+| `health` | object | Thresholds, the baseline path, and extra `ignore` globs for [`roe health`](/commands/health). Every key is optional. |
 
 Unknown fields are rejected, so a typo fails loudly instead of being
 silently ignored.
@@ -69,6 +75,7 @@ Every field under `dupes` is optional and corresponds to a flag on
 | `minTokens` | number | `--min-tokens` | `50` |
 | `minLines` | number | `--min-lines` | `5` |
 | `minOccurrences` | number | `--min-occurrences` | `2` |
+| `ignore` | string[] | — | none |
 
 This block is what calibrates a combined run: [`roe check`](/commands/check)
 takes no dupes flags of its own, so raising `minTokens` here is how a one-line
@@ -89,6 +96,7 @@ Every field under `health` is optional and corresponds to a flag on
 | `maxTypeMembers` | number | `--max-type-members` | `20` |
 | `excludeTests` | boolean | `--exclude-tests` | `false` |
 | `baseline` | string | `--baseline` | none |
+| `ignore` | string[] | — | none |
 
 Committing these is usually better than passing six flags on every CI
 invocation, and it keeps local runs and CI in agreement.
@@ -108,9 +116,33 @@ full-backlog run.
 A trailing `/` matches the whole directory, so `"Generated/"` needs no `**`.
 Patterns containing `..` are unsupported and produce a warning.
 
-The same `ignore` list also applies to `roe dupes` and to `roe health`'s
-circular dependencies, since both span multiple files and don't map cleanly
-onto a single-line [inline suppression comment](/suppressing-findings).
+The top-level `ignore` list applies to all three commands — including
+`roe dupes` and `roe health`'s circular dependencies, which span multiple
+files and don't map cleanly onto a single-line
+[inline suppression comment](/suppressing-findings).
+
+Each command's section takes an `ignore` list of its own with the same
+rules, unioned with the top-level list and applied only to that command.
+That keeps a suppression as narrow as the exception it accepts: ignoring an
+intentional duplicate through `dupes.ignore` doesn't cost the file its
+dead-code and health coverage.
+
+```yaml roe.yaml
+ignore:
+  - "Generated/**"
+deadCode:
+  ignore:
+    - "Plugins/**"
+dupes:
+  ignore:
+    - "**/InsurerUnionQuery.cs"
+health:
+  ignore:
+    - "**/GeneratedModels.cs"
+```
+
+A scoped list only ever adds patterns — it can't re-include a file the
+top-level list ignores — and an empty one is a no-op.
 
 ## Precedence
 
@@ -135,6 +167,10 @@ Dupes settings follow the same per-field order: `--min-tokens 100` overrides
 `"minTokens"` for that run, and the rest still come from the config. `--mode`
 carries a value, so unlike `--aggressive` and `--exclude-tests` it has no
 on-only nuance — `--mode exact` overrides a config's `"semantic"` cleanly.
+
+Ignore lists sit outside this order entirely: they have no CLI flag, and a
+command's own `ignore` list is unioned with the top-level one rather than
+replacing it.
 
 To confirm a config-only `excludeTests` or `ignore` actually applied, read the
 `roe health` footer: the scanned counts narrow by whatever was excluded, and
