@@ -21,12 +21,24 @@ pub struct RoeConfig {
     /// matching files have all their findings suppressed. A pattern ending in
     /// `/` also matches everything under that directory.
     pub ignore: Option<Vec<String>>,
+    /// Extra `ignore` globs applied only to `roe dead-code`.
+    #[serde(rename = "deadCode")]
+    pub dead_code: Option<DeadCodeConfig>,
     /// Defaults for `roe dupes`' matching mode and thresholds, so a combined
     /// `roe check` — which takes no dupes flags — can be calibrated.
     pub dupes: Option<DupesConfig>,
     /// Defaults for `roe health`'s thresholds, so a CI invocation doesn't have
     /// to repeat six flags.
     pub health: Option<HealthConfig>,
+}
+
+/// The `deadCode` block of a config file.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeadCodeConfig {
+    /// Extra ignore globs applied only to `roe dead-code`, unioned with the
+    /// top-level `ignore` list and resolved with the same rules.
+    pub ignore: Option<Vec<String>>,
 }
 
 /// The `health` block of a config file. Every field is optional; an absent
@@ -44,6 +56,9 @@ pub struct HealthConfig {
     /// Path to a baseline file, relative to this config file's own directory
     /// the way `ignore` globs are.
     pub baseline: Option<String>,
+    /// Extra ignore globs applied only to `roe health`, unioned with the
+    /// top-level `ignore` list and resolved with the same rules.
+    pub ignore: Option<Vec<String>>,
 }
 
 /// The `dupes` block of a config file. Every field is optional; an absent one
@@ -51,6 +66,9 @@ pub struct HealthConfig {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DupesConfig {
+    /// Extra ignore globs applied only to `roe dupes`, unioned with the
+    /// top-level `ignore` list and resolved with the same rules.
+    pub ignore: Option<Vec<String>>,
     pub min_lines: Option<u32>,
     pub min_occurrences: Option<u32>,
     pub min_tokens: Option<u32>,
@@ -727,6 +745,75 @@ mod tests {
 
         assert_eq!(dupes.mode, Some(DupeMode::Semantic));
         assert_eq!(dupes.min_tokens, Some(100));
+    }
+
+    #[test]
+    fn parses_dupes_ignore_globs() {
+        let config: RoeConfig =
+            serde_json::from_str(r#"{"dupes": {"ignore": ["Legacy/"]}}"#).expect("valid json");
+        let dupes = config.dupes.expect("a dupes block");
+
+        assert_eq!(dupes.ignore, Some(vec!["Legacy/".to_string()]));
+        assert_eq!(dupes.min_tokens, None);
+    }
+
+    #[test]
+    fn parses_health_ignore_globs() {
+        let config: RoeConfig =
+            serde_json::from_str(r#"{"health": {"ignore": ["**/GeneratedModels.cs"]}}"#)
+                .expect("valid json");
+        let health = config.health.expect("a health block");
+
+        assert_eq!(
+            health.ignore,
+            Some(vec!["**/GeneratedModels.cs".to_string()])
+        );
+    }
+
+    #[test]
+    fn parses_dead_code_ignore_globs() {
+        let config: RoeConfig =
+            serde_json::from_str(r#"{"deadCode": {"ignore": ["Handlers/"]}}"#).expect("valid json");
+        let dead_code = config.dead_code.expect("a deadCode block");
+
+        assert_eq!(dead_code.ignore, Some(vec!["Handlers/".to_string()]));
+    }
+
+    #[test]
+    fn parses_yaml_scoped_ignores() {
+        // The exact shape issue #32 asked for.
+        let config: RoeConfig = serde_yaml_ng::from_str(concat!(
+            "ignore:\n",
+            "  - \"Generated/**\"\n",
+            "dupes:\n",
+            "  ignore:\n",
+            "    - \"**/DashboardGetPlatformPolicyMembers.cs\"\n",
+            "health:\n",
+            "  ignore:\n",
+            "    - \"**/GeneratedModels.cs\"\n",
+        ))
+        .expect("valid yaml");
+
+        assert_eq!(config.ignore, Some(vec!["Generated/**".to_string()]));
+        assert_eq!(
+            config.dupes.expect("a dupes block").ignore,
+            Some(vec!["**/DashboardGetPlatformPolicyMembers.cs".to_string()])
+        );
+        assert_eq!(
+            config.health.expect("a health block").ignore,
+            Some(vec!["**/GeneratedModels.cs".to_string()])
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_dead_code_fields() {
+        // `ignor` is a near-miss of the real `ignore` field — it must fail
+        // loudly rather than leave the user thinking a suppression is in
+        // force when it isn't. It is declared in `_typos.toml` so the spell
+        // checker leaves it alone.
+        let error = serde_json::from_str::<RoeConfig>(r#"{"deadCode": {"ignor": []}}"#)
+            .expect_err("typo should not be silently ignored");
+        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]

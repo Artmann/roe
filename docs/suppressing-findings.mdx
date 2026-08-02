@@ -78,10 +78,25 @@ To drop every finding in matching files — for `dead-code`, `dupes`, and
 }
 ```
 
+To keep a suppression as narrow as the exception it accepts, scope it to one
+command instead: each command's section takes an `ignore` list of its own,
+unioned with the top-level one and applied only to that command. Accepting
+an intentional duplicate this way doesn't cost the file its dead-code and
+health coverage:
+
+```json roe.json
+{
+  "dupes": {
+    "ignore": ["**/InsurerUnionQuery.cs"]
+  }
+}
+```
+
 See [Configuration](/configuration) for glob semantics and config discovery.
 
 <Note>
   Duplicate groups and circular dependencies span multiple files, so neither
   maps onto a single-line comment and neither has an inline suppression.
-  Ignore globs are the only way to silence them.
+  Ignore globs — top-level, `dupes.ignore`, or `health.ignore` — are the only
+  way to silence them.
 </Note>

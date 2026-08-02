@@ -109,13 +109,16 @@ pub(crate) fn execute(context: &Context, args: &DupesArgs) -> anyhow::Result<Ana
         },
     );
 
+    let ignore = context.ignore_for(commands::Analysis::Dupes);
     let mut analysis = analyze_with_ignores(
         &context.root,
         effective.mode,
         effective.min_tokens,
         effective.min_lines,
         effective.min_occurrences,
-        context.ignore(),
+        ignore
+            .as_ref()
+            .map(|(patterns, dir)| (patterns.as_slice(), *dir)),
     )?;
     analysis
         .workspace

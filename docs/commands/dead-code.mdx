@@ -50,7 +50,10 @@ never flagged even though no executable in the workspace uses it:
 roe dead-code --library MyLib
 ```
 
-Both can also be set persistently in a [config file](/configuration).
+Both can also be set persistently in a [config file](/configuration). A
+config's `deadCode.ignore` glob list drops every dead-code finding in
+matching files without affecting the other commands — see
+[Suppressing findings](/suppressing-findings).
 
 ## What counts as an entry point
 
