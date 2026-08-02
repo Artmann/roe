@@ -296,6 +296,66 @@ fn dupes_config_ignore_yaml_drops_the_ignored_occurrence() {
 }
 
 #[test]
+fn dupes_config_thresholds_json_reveal_a_short_clone() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_config_thresholds_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("duplicate group"), "got {stdout}");
+}
+
+#[test]
+fn dupes_config_thresholds_yaml_reveal_a_short_clone() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_config_thresholds_yaml")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("duplicate group"), "got {stdout}");
+}
+
+#[test]
+fn dupes_cli_flags_override_the_config_thresholds() {
+    let output = roe()
+        .args([
+            "dupes",
+            &fixture("dupes_config_thresholds_json"),
+            "--min-tokens",
+            "500",
+        ])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"), "got {stdout}");
+}
+
+#[test]
+fn dupes_config_mode_semantic_finds_the_renamed_clone() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_config_mode")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("found 1 duplicate group"), "got {stdout}");
+}
+
+#[test]
+fn dupes_cli_mode_overrides_the_config_mode() {
+    let output = roe()
+        .args(["dupes", &fixture("dupes_config_mode"), "--mode", "exact"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("no duplicate code found"), "got {stdout}");
+}
+
+#[test]
 fn dupes_invalid_path_exits_2() {
     let output = roe()
         .args(["dupes", "/definitely/not/a/real/path"])
@@ -1089,4 +1149,37 @@ fn check_reports_each_warning_once() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let occurrences = stderr.matches("no obj/ directories found").count();
     assert_eq!(occurrences, 1, "got {stderr}");
+}
+
+/// The combined run takes no dupes flags, so the config's `dupes` block is
+/// the only way to calibrate its duplicate analysis.
+#[test]
+fn check_reads_the_dupes_config_for_the_combined_run() {
+    let output = roe()
+        .args([&fixture("dupes_config_thresholds_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("duplicate group"), "got {stdout}");
+}
+
+/// The combined JSON report must state the mode that actually ran, not a
+/// hard-coded `exact`.
+#[test]
+fn check_json_reports_the_configured_dupe_mode() {
+    let output = roe()
+        .args([&fixture("dupes_config_mode"), "--format", "json"])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = normalize(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(parsed["dupes"]["mode"], "semantic", "got {stdout}");
+
+    let groups = parsed["dupes"]["groups"]
+        .as_array()
+        .expect("groups is an array");
+    assert!(!groups.is_empty(), "got {stdout}");
 }

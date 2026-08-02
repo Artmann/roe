@@ -4,14 +4,14 @@ use std::process::ExitCode;
 
 use colored::Colorize;
 
-use crate::cli::{DupeMode, HealthSort, OutputFormat};
+use crate::cli::{HealthSort, OutputFormat};
 use crate::commands::{dead_code, dupes, health};
 use crate::report;
 
-/// The presentation defaults the combined run uses. `check` takes no
-/// per-analysis flags, so these mirror what each command does when invoked with
-/// nothing but a path.
-const DUPE_MODE: DupeMode = DupeMode::Exact;
+/// The presentation default the combined run uses. `check` takes no
+/// per-analysis flags, so this mirrors what `roe health` does when invoked
+/// with nothing but a path. The dupes mode needs no such default — the
+/// analysis records the mode it actually ran with.
 const HEALTH_SORT: HealthSort = HealthSort::Severity;
 
 /// Fixed rather than terminal width, so the output diffs cleanly between runs
@@ -41,7 +41,7 @@ pub fn emit(
                 &dupes.result,
                 &dupes.workspace,
                 format,
-                DUPE_MODE,
+                dupes.mode,
                 // `--no-code` is a dupes-only flag; the combined run shows the
                 // duplicated source the same way a bare `roe dupes` does.
                 true,
@@ -59,7 +59,7 @@ pub fn emit(
                 0,
             );
         }
-        OutputFormat::Json => json::print(dead_code, dupes, health, DUPE_MODE),
+        OutputFormat::Json => json::print(dead_code, dupes, health),
     }
 
     let found = dead_code.result.has_findings()

@@ -49,9 +49,11 @@ summarized away.
 
 Per-analysis flags — `--aggressive`, `--min-tokens`, `--max-complexity`, and the
 rest — aren't accepted here, because they mean nothing to the other two
-analyses. Set them in a [config file](/configuration), which the combined run
-reads exactly once, or run the [individual command](/commands/dead-code) when you
-want to tune one analysis for a single invocation.
+analyses. Set them in a [config file](/configuration) — duplicate-analysis
+settings under `dupes`, health thresholds under `health` — which the combined
+run reads exactly once, or run the
+[individual command](/commands/dead-code) when you want to tune one analysis
+for a single invocation.
 
 ## Exit code
 
@@ -81,7 +83,8 @@ unchanged:
 ```
 
 The per-analysis schemas are documented under
-[JSON output](/reference/json-output).
+[JSON output](/reference/json-output). `dupes.mode` states the mode the run
+actually used — `"semantic"` when the config's `dupes` block says so.
 
 <Note>
   A mistyped command name lands on the positional `PATH` — `roe dupez` fails with

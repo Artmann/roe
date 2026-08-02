@@ -186,6 +186,10 @@ Pass `--mode semantic` to also catch blocks that were copied and then had
 their variable names or literal values changed, but are otherwise
 structurally the same.
 
+The mode and the three `--min-*` thresholds fall back to the `dupes` block of
+a `roe.json`/`roe.yaml` config file before their built-in defaults, so a
+calibration is committed once instead of repeated on every invocation.
+
 ### `roe health`
 
 Flags complexity, size, and coupling problems: methods that branch or nest
@@ -438,6 +442,12 @@ walking up from the analysis root to the nearest directory containing one
   "roots": ["MyApp.Program.Main"],
   "libraryProjects": ["MyLib"],
   "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"],
+  "dupes": {
+    "mode": "semantic",
+    "minTokens": 100,
+    "minLines": 10,
+    "minOccurrences": 2
+  },
   "health": {
     "maxComplexity": 15,
     "maxCognitive": 20,
@@ -461,9 +471,12 @@ roots / no extra library projects). The same `ignore` list also applies to
 `roe dupes`, since a duplicate spans multiple files and doesn't map cleanly
 onto a single-line inline suppression comment.
 
-The `health` block does the same for `roe health`'s thresholds, so a CI
-invocation doesn't have to repeat six flags — an explicit flag wins, then the
-config value, then the built-in default. Every field is optional, and an
+The `dupes` block sets defaults for `roe dupes`' matching mode and
+thresholds, and the `health` block does the same for `roe health`'s
+thresholds, so a CI invocation doesn't have to repeat six flags — per field,
+an explicit flag wins, then the config value, then the built-in default.
+These blocks are also what calibrates a combined `roe check`, which takes no
+per-analysis flags of its own. Every field is optional, and an
 unrecognised one is an error rather than a silent no-op, so a typo can't leave
 you thinking a limit is in force when it isn't. `baseline` names a baseline
 file, resolved relative to the config file's own directory the way `ignore`

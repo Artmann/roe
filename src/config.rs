@@ -4,6 +4,8 @@ use anyhow::{Context, bail};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
+use crate::cli::DupeMode;
+
 /// User-authored suppression/override settings, loaded from `roe.json`,
 /// `roe.yaml`, or `roe.yml`.
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -19,6 +21,9 @@ pub struct RoeConfig {
     /// matching files have all their findings suppressed. A pattern ending in
     /// `/` also matches everything under that directory.
     pub ignore: Option<Vec<String>>,
+    /// Defaults for `roe dupes`' matching mode and thresholds, so a combined
+    /// `roe check` — which takes no dupes flags — can be calibrated.
+    pub dupes: Option<DupesConfig>,
     /// Defaults for `roe health`'s thresholds, so a CI invocation doesn't have
     /// to repeat six flags.
     pub health: Option<HealthConfig>,
@@ -39,6 +44,17 @@ pub struct HealthConfig {
     /// Path to a baseline file, relative to this config file's own directory
     /// the way `ignore` globs are.
     pub baseline: Option<String>,
+}
+
+/// The `dupes` block of a config file. Every field is optional; an absent one
+/// falls back to the built-in default.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DupesConfig {
+    pub min_lines: Option<u32>,
+    pub min_occurrences: Option<u32>,
+    pub min_tokens: Option<u32>,
+    pub mode: Option<DupeMode>,
 }
 
 pub struct ResolvedConfig {
@@ -202,6 +218,62 @@ impl Default for EffectiveHealth {
     }
 }
 
+/// `roe dupes` settings after applying default → config file → CLI flag
+/// precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectiveDupes {
+    pub min_lines: u32,
+    pub min_occurrences: u32,
+    pub min_tokens: u32,
+    pub mode: DupeMode,
+}
+
+impl Default for EffectiveDupes {
+    /// The same values the `roe dupes` help text spells out as `[default: …]`.
+    fn default() -> Self {
+        EffectiveDupes {
+            min_lines: 5,
+            min_occurrences: 2,
+            min_tokens: 50,
+            mode: DupeMode::Exact,
+        }
+    }
+}
+
+/// The same three-way fallback [`merge_health`] applies: an explicit CLI flag
+/// wins, then the config file's value, then the built-in default. Nothing
+/// here is OR'd the way `aggressive` and `exclude_tests` are — `--mode`
+/// carries a value, so an explicit `--mode exact` overrides a config's
+/// `"semantic"` cleanly.
+pub fn merge_dupes(config: Option<&DupesConfig>, cli: DupesOverrides) -> EffectiveDupes {
+    let defaults = EffectiveDupes::default();
+    let pick = |from_cli: Option<u32>, from_config: Option<u32>, fallback: u32| {
+        from_cli.or(from_config).unwrap_or(fallback)
+    };
+
+    EffectiveDupes {
+        min_lines: pick(
+            cli.min_lines,
+            config.and_then(|c| c.min_lines),
+            defaults.min_lines,
+        ),
+        min_occurrences: pick(
+            cli.min_occurrences,
+            config.and_then(|c| c.min_occurrences),
+            defaults.min_occurrences,
+        ),
+        min_tokens: pick(
+            cli.min_tokens,
+            config.and_then(|c| c.min_tokens),
+            defaults.min_tokens,
+        ),
+        mode: cli
+            .mode
+            .or(config.and_then(|c| c.mode))
+            .unwrap_or(defaults.mode),
+    }
+}
+
 /// Threshold precedence is a plain three-way fallback, which the `Option`
 /// typing on both sides makes explicit: an explicit CLI flag wins, then the
 /// config file's value, then the built-in default.
@@ -273,6 +345,17 @@ pub fn resolve_baseline(
     let named = config.and_then(|health| health.baseline.as_deref())?;
 
     Some(config_dir.unwrap_or(Path::new("")).join(named))
+}
+
+/// The subset of `DupesArgs` that participates in config merging — passed as
+/// a struct so the three same-typed thresholds can't be transposed at the
+/// call site.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DupesOverrides {
+    pub min_lines: Option<u32>,
+    pub min_occurrences: Option<u32>,
+    pub min_tokens: Option<u32>,
+    pub mode: Option<DupeMode>,
 }
 
 /// The subset of `HealthArgs` that participates in config merging — passed as
@@ -486,6 +569,79 @@ mod tests {
     }
 
     #[test]
+    fn merge_dupes_prefers_the_cli_threshold_over_the_config() {
+        let config = DupesConfig {
+            min_tokens: Some(100),
+            ..Default::default()
+        };
+        let cli = DupesOverrides {
+            min_tokens: Some(30),
+            ..Default::default()
+        };
+        assert_eq!(merge_dupes(Some(&config), cli).min_tokens, 30);
+    }
+
+    #[test]
+    fn merge_dupes_falls_back_to_the_config_threshold() {
+        let config = DupesConfig {
+            min_tokens: Some(100),
+            ..Default::default()
+        };
+        assert_eq!(
+            merge_dupes(Some(&config), DupesOverrides::default()).min_tokens,
+            100
+        );
+    }
+
+    #[test]
+    fn merge_dupes_falls_back_to_the_built_in_defaults() {
+        assert_eq!(
+            merge_dupes(None, DupesOverrides::default()),
+            EffectiveDupes::default()
+        );
+    }
+
+    #[test]
+    fn merge_dupes_resolves_each_setting_independently() {
+        // A config that sets only one threshold must not reset the others.
+        let config = DupesConfig {
+            min_tokens: Some(100),
+            ..Default::default()
+        };
+        let cli = DupesOverrides {
+            min_lines: Some(10),
+            ..Default::default()
+        };
+        let effective = merge_dupes(Some(&config), cli);
+
+        assert_eq!(effective.min_tokens, 100);
+        assert_eq!(effective.min_lines, 10);
+        assert_eq!(
+            effective.min_occurrences,
+            EffectiveDupes::default().min_occurrences
+        );
+        assert_eq!(effective.mode, DupeMode::Exact);
+    }
+
+    #[test]
+    fn merge_dupes_prefers_the_cli_mode_over_the_config() {
+        let config = DupesConfig {
+            mode: Some(DupeMode::Semantic),
+            ..Default::default()
+        };
+        let cli = DupesOverrides {
+            mode: Some(DupeMode::Exact),
+            ..Default::default()
+        };
+        assert_eq!(merge_dupes(Some(&config), cli).mode, DupeMode::Exact);
+
+        assert_eq!(
+            merge_dupes(Some(&config), DupesOverrides::default()).mode,
+            DupeMode::Semantic
+        );
+    }
+
+    #[test]
     fn a_config_baseline_resolves_against_the_config_directory() {
         // Not against the working directory: `roe health src/App` from the
         // repository root has to find the same file as a run from inside
@@ -548,6 +704,52 @@ mod tests {
         let error = serde_json::from_str::<RoeConfig>(r#"{"health": {"maxComplexty": 15}}"#)
             .expect_err("typo should not be silently ignored");
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn parses_a_dupes_block() {
+        let config: RoeConfig =
+            serde_json::from_str(r#"{"dupes": {"minTokens": 100, "mode": "semantic"}}"#)
+                .expect("valid json");
+        let dupes = config.dupes.expect("a dupes block");
+
+        assert_eq!(dupes.min_tokens, Some(100));
+        assert_eq!(dupes.mode, Some(DupeMode::Semantic));
+        assert_eq!(dupes.min_lines, None);
+    }
+
+    #[test]
+    fn parses_a_dupes_mode_from_yaml() {
+        let config: RoeConfig =
+            serde_yaml_ng::from_str("dupes:\n  mode: semantic\n  minTokens: 100\n")
+                .expect("valid yaml");
+        let dupes = config.dupes.expect("a dupes block");
+
+        assert_eq!(dupes.mode, Some(DupeMode::Semantic));
+        assert_eq!(dupes.min_tokens, Some(100));
+    }
+
+    #[test]
+    fn rejects_unknown_dupes_fields() {
+        // `minToken` is a near-miss of the real `minTokens` field — it must
+        // fail loudly rather than leave the user thinking a threshold is in
+        // force when it isn't.
+        let error = serde_json::from_str::<RoeConfig>(r#"{"dupes": {"minToken": 100}}"#)
+            .expect_err("typo should not be silently ignored");
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn rejects_an_invalid_dupe_mode() {
+        let error = serde_json::from_str::<RoeConfig>(r#"{"dupes": {"mode": "fast"}}"#)
+            .expect_err("an unknown mode should fail loudly");
+        let message = error.to_string();
+
+        assert!(message.contains("unknown variant `fast`"), "got {message}");
+        assert!(
+            message.contains("expected `exact` or `semantic`"),
+            "got {message}"
+        );
     }
 
     #[test]

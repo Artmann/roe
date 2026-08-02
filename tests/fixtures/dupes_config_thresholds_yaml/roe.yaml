@@ -1,0 +1,3 @@
+dupes:
+  minTokens: 5
+  minLines: 1
