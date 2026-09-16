@@ -15,14 +15,18 @@ pub struct Analysis {
 
 /// The full dead-code pipeline: discover → extract → symbol table → kill
 /// list → entry points → graph → reachability → detectors → inline
-/// suppressions.
+/// suppressions. `entry_points` globs resolve against the workspace root;
+/// the config-aware path through [`execute`] resolves them against the
+/// config file's own directory instead.
 pub fn analyze(
     root: &Path,
     aggressive: bool,
     manual_roots: &[String],
     library_projects: &[String],
+    entry_points: &[String],
 ) -> anyhow::Result<Analysis> {
     let extracted = commands::Extracted::build(root)?;
+    let entry_point_dir = extracted.workspace.root.clone();
 
     analyze_extracted(
         &extracted,
@@ -30,6 +34,8 @@ pub fn analyze(
         aggressive,
         manual_roots,
         library_projects,
+        entry_points,
+        &entry_point_dir,
     )
 }
 
@@ -42,6 +48,8 @@ pub(crate) fn analyze_extracted(
     aggressive: bool,
     manual_roots: &[String],
     library_projects: &[String],
+    entry_points: &[String],
+    entry_point_dir: &Path,
 ) -> anyhow::Result<Analysis> {
     let mut workspace = extracted.workspace.clone();
     let rodeo = &extracted.rodeo;
@@ -51,7 +59,7 @@ pub(crate) fn analyze_extracted(
 
     rules::apply_kill_list(&mut resolution, &workspace, rodeo, aggressive);
 
-    let notes = entry_points::mark_roots(
+    let mut notes = entry_points::mark_roots(
         &mut resolution,
         &workspace,
         facts,
@@ -59,6 +67,14 @@ pub(crate) fn analyze_extracted(
         library_projects,
         rodeo,
     );
+
+    let entry_point_globs =
+        config::build_entry_point_globs(entry_point_dir, entry_points, &mut workspace.warnings);
+    notes.extend(entry_points::mark_entry_point_files(
+        &mut resolution,
+        &workspace,
+        &entry_point_globs,
+    ));
 
     let symbol_graph = graph::build_graph(&mut resolution, &workspace, facts, rodeo);
     let roots: Vec<SymbolId> = resolution
@@ -109,12 +125,25 @@ pub(crate) fn execute_extracted(
         &args.library_projects,
     );
 
+    // `entryPoints` has no CLI flag (like `ignore`), so it comes straight
+    // from the config, and its globs resolve against the config file's own
+    // directory the way `ignore` globs do.
+    let (entry_points, entry_point_dir) = match context.config.as_ref() {
+        Some(resolved) => (
+            resolved.config.entry_points.clone().unwrap_or_default(),
+            resolved.dir.clone(),
+        ),
+        None => (Vec::new(), context.root.clone()),
+    };
+
     let mut analysis = analyze_extracted(
         extracted,
         extracted.started,
         effective.aggressive,
         &effective.roots,
         &effective.library_projects,
+        &entry_points,
+        &entry_point_dir,
     )?;
     analysis
         .workspace

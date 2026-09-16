@@ -25,6 +25,7 @@ error.
 {
   "aggressive": true,
   "roots": ["MyApp.Program.Main"],
+  "entryPoints": ["Jobs/", "Api/Handlers/**/*.cs"],
   "libraryProjects": ["MyLib"],
   "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"],
   "deadCode": {
@@ -55,6 +56,7 @@ error.
 | --- | --- | --- |
 | `aggressive` | boolean | Also flag enum members and public settable auto-properties. Default for the `--aggressive` flag. |
 | `roots` | string[] | Fully-qualified symbol names to treat as extra entry-point roots. Default for `--root`. |
+| `entryPoints` | string[] | Glob patterns naming files to treat as entry points: every declaration in a matching file is a root, so the file and everything it references count as used. |
 | `libraryProjects` | string[] | Project names to always treat in library mode (public API counts as used). Default for `--library`. |
 | `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to all three commands; each command's section can add its own. |
 | `deadCode` | object | Extra `ignore` globs applied only to [`roe dead-code`](/commands/dead-code). |
@@ -109,6 +111,31 @@ passing `--baseline` is also what makes a bare `roe` and
 [`roe check`](/commands/check) honour it, since neither takes health flags of
 its own. A path that doesn't exist is a hard error, not a silent
 full-backlog run.
+
+## Entry-point files
+
+`entryPoints` is the file-level counterpart to `roots`: where `roots` names
+one symbol by its fully-qualified name, an entry-point glob keeps a whole
+file's contents alive. Every declaration in a matching file becomes a root,
+so the file is never flagged and everything it references counts as used —
+unlike an `ignore` glob, which only drops the findings in the matching file
+itself.
+
+Use it for files that are consumed in ways roe can't see: a plugin host
+loading them by path, string-based reflection, or an external tool reading
+the file directly.
+
+```json roe.json
+{
+  "entryPoints": ["Jobs/", "Api/Handlers/**/*.cs"]
+}
+```
+
+Patterns resolve relative to the config file's own directory with the same
+rules as `ignore` globs — a trailing `/` matches the whole directory, and
+`..` is unsupported. A pattern that matches no file at all is reported as a
+note in the output, so a stale path can't silently drop the protection it
+promised.
 
 ## Ignore globs
 
@@ -168,9 +195,9 @@ Dupes settings follow the same per-field order: `--min-tokens 100` overrides
 carries a value, so unlike `--aggressive` and `--exclude-tests` it has no
 on-only nuance — `--mode exact` overrides a config's `"semantic"` cleanly.
 
-Ignore lists sit outside this order entirely: they have no CLI flag, and a
-command's own `ignore` list is unioned with the top-level one rather than
-replacing it.
+Ignore lists and `entryPoints` sit outside this order entirely: neither has
+a CLI flag, and a command's own `ignore` list is unioned with the top-level
+one rather than replacing it.
 
 To confirm a config-only `excludeTests` or `ignore` actually applied, read the
 `roe health` footer: the scanned counts narrow by whatever was excluded, and

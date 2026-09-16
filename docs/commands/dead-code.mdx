@@ -51,8 +51,12 @@ roe dead-code --library MyLib
 ```
 
 Both can also be set persistently in a [config file](/configuration). A
-config's `deadCode.ignore` glob list drops every dead-code finding in
-matching files without affecting the other commands — see
+config's `entryPoints` glob list roots whole files rather than single
+symbols — every declaration in a matching file counts as used, along with
+everything it references — see
+[Entry-point files](/configuration#entry-point-files). And a config's
+`deadCode.ignore` glob list drops every dead-code finding in matching files
+without affecting the other commands — see
 [Suppressing findings](/suppressing-findings).
 
 ## What counts as an entry point

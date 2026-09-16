@@ -46,6 +46,23 @@ roe dead-code --root App.Jobs.NightlyCleanupJob
 }
 ```
 
+When a whole file is consumed in ways roe can't see — a plugin host loading
+it by path, an external tool reading it directly — name the file with the
+`entryPoints` config field instead of listing every symbol in it. Patterns
+are globs resolved relative to the config file's directory (a trailing `/`
+matches the whole directory); every declaration in a matching file becomes
+a root, so the file and everything it references count as used:
+
+```json roe.json
+{
+  "entryPoints": ["Plugins/", "Jobs/**/*.cs"]
+}
+```
+
+A pattern that matches no file at all is reported as a note, so a stale
+path can't silently drop the protection it promised. See
+[Configuration](/configuration#entry-point-files) for the full rules.
+
 ## How detection works
 
 Under the hood, `roe dead-code` runs a five-step pipeline:

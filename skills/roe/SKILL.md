@@ -154,8 +154,9 @@ The `kind` values (identical to the inline-suppression rule names):
 
 Prefer fixing real findings over suppressing. When a finding genuinely is a
 false positive (e.g. code invoked via string-based reflection), first
-consider whether `--root`/`roots` describes the situation better — a root
-documents *why* the code is alive, a suppression just silences the report.
+consider whether `--root`/`roots` (or `entryPoints` for a whole file)
+describes the situation better — a root documents *why* the code is alive,
+a suppression just silences the report.
 
 Inline comments work eslint-style, checked after the first `//` (so `///`
 doc-comments work too):
@@ -188,6 +189,7 @@ fields are a hard error, so typos fail loudly.
 {
   "aggressive": false,
   "roots": ["App.Jobs.NightlyCleanupJob"],
+  "entryPoints": ["Plugins/", "Jobs/**/*.cs"],
   "libraryProjects": ["App.Sdk"],
   "ignore": ["Migrations/**", "Generated/"],
   "deadCode": {
@@ -228,8 +230,16 @@ Precedence is CLI flag → config → built-in default, with gotchas:
 - `--root` and `--library` **replace** the config's `roots`/`libraryProjects`
   lists entirely rather than merging with them.
 - The `dupes` settings are plain per-field overrides (`--mode exact` beats a
-  config `"semantic"`), and ignore lists have no CLI flag at all — scoped
-  lists only ever add to the top-level one.
+  config `"semantic"`), and ignore lists and `entryPoints` have no CLI flag
+  at all — scoped ignore lists only ever add to the top-level one.
+
+`entryPoints` is the file-level counterpart to `roots`: globs (resolved
+relative to the config file's directory, trailing `/` means the whole
+subtree) whose matching files are treated as entry points — every
+declaration in them is a root, so the file and everything it references
+count as used. Prefer it over `deadCode.ignore` for plugin/reflection-loaded
+files: an ignore only hides the file's own findings, an entry point also
+keeps alive what the file uses.
 
 ## Adopting roe on a legacy codebase
 
