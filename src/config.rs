@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
 use crate::cli::DupeMode;
@@ -13,6 +13,14 @@ use crate::cli::DupeMode;
 pub struct RoeConfig {
     pub aggressive: Option<bool>,
     pub roots: Option<Vec<String>>,
+    /// Glob patterns (relative to this config file's directory, resolved
+    /// with the same rules as `ignore`) naming files to treat as entry
+    /// points: every declaration in a matching file is a root, so the file
+    /// and everything it references count as used. For files consumed in
+    /// ways roe can't see — plugin hosts, reflection loaders, source
+    /// generators reading the file by path.
+    #[serde(rename = "entryPoints")]
+    pub entry_points: Option<Vec<String>>,
     /// Project names to always treat in library mode (public API is used),
     /// regardless of executables elsewhere in the workspace.
     #[serde(rename = "libraryProjects")]
@@ -403,27 +411,78 @@ pub(crate) fn build_ignore_globset(
     let mut builder = GlobSetBuilder::new();
     let mut any = false;
     for pattern in patterns {
-        if pattern.contains("..") {
-            warnings.push(format!("unsupported ignore glob with '..': {pattern}"));
-            continue;
-        }
-        let expanded = match pattern.strip_suffix('/') {
-            Some(dir) => format!("{dir}/**"),
-            None => pattern.clone(),
-        };
-        let absolute = format!("{}/{}", config_dir.display(), expanded);
-        match Glob::new(&absolute) {
-            Ok(glob) => {
-                builder.add(glob);
-                any = true;
-            }
-            Err(error) => warnings.push(format!("invalid ignore glob {pattern}: {error}")),
+        if let Some(glob) = build_config_glob(config_dir, pattern, "ignore", warnings) {
+            builder.add(glob);
+            any = true;
         }
     }
     if !any {
         return None;
     }
     builder.build().ok()
+}
+
+/// A single compiled `entryPoints` pattern. Kept per-pattern rather than
+/// merged into one `GlobSet` so a pattern that matches no file at all can be
+/// reported on its own.
+pub struct EntryPointGlob {
+    pub matcher: GlobMatcher,
+    pub pattern: String,
+}
+
+/// Compiles `entryPoints` glob patterns against `config_dir` (the config
+/// file's own directory) with the same resolution rules `ignore` globs use.
+/// A pattern that doesn't compile is skipped with a warning.
+pub fn build_entry_point_globs(
+    config_dir: &Path,
+    patterns: &[String],
+    warnings: &mut Vec<String>,
+) -> Vec<EntryPointGlob> {
+    patterns
+        .iter()
+        .filter_map(|pattern| {
+            build_config_glob(config_dir, pattern, "entryPoints", warnings).map(|glob| {
+                EntryPointGlob {
+                    matcher: glob.compile_matcher(),
+                    pattern: pattern.clone(),
+                }
+            })
+        })
+        .collect()
+}
+
+/// Expands one config-relative glob pattern into an absolute `Glob` with the
+/// rules every config glob list shares: patterns resolve against the config
+/// file's own directory, a trailing slash on a pattern reads as "this whole
+/// directory" without the user having to spell out `**` themselves, and `..`
+/// is unsupported. `label` names the config field so a warning points at the
+/// list that holds the bad pattern.
+fn build_config_glob(
+    config_dir: &Path,
+    pattern: &str,
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Glob> {
+    if pattern.contains("..") {
+        warnings.push(format!("unsupported {label} glob with '..': {pattern}"));
+
+        return None;
+    }
+
+    let expanded = match pattern.strip_suffix('/') {
+        Some(directory) => format!("{directory}/**"),
+        None => pattern.to_string(),
+    };
+    let absolute = format!("{}/{}", config_dir.display(), expanded);
+
+    match Glob::new(&absolute) {
+        Ok(glob) => Some(glob),
+        Err(error) => {
+            warnings.push(format!("invalid {label} glob {pattern}: {error}"));
+
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -888,6 +947,50 @@ mod tests {
         let result = discover(&dir, &mut warnings);
         std::fs::remove_dir_all(&dir).ok();
         assert!(result.expect("discover should succeed").is_none());
+    }
+
+    #[test]
+    fn parses_entry_points() {
+        let config: RoeConfig =
+            serde_json::from_str(r#"{"entryPoints": ["Plugins/"]}"#).expect("valid json");
+        assert_eq!(config.entry_points, Some(vec!["Plugins/".to_string()]));
+
+        let config: RoeConfig =
+            serde_yaml_ng::from_str("entryPoints:\n  - \"Jobs/**/*.cs\"\n").expect("valid yaml");
+        assert_eq!(config.entry_points, Some(vec!["Jobs/**/*.cs".to_string()]));
+    }
+
+    #[test]
+    fn entry_point_glob_trailing_slash_matches_whole_directory() {
+        let mut warnings = Vec::new();
+        let globs =
+            build_entry_point_globs(Path::new("/repo"), &["Plugins/".to_string()], &mut warnings);
+
+        assert_eq!(globs.len(), 1);
+        assert_eq!(globs[0].pattern, "Plugins/");
+        assert!(
+            globs[0]
+                .matcher
+                .is_match(Path::new("/repo/Plugins/Nested/File.cs"))
+        );
+        assert!(!globs[0].matcher.is_match(Path::new("/repo/Other/File.cs")));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn entry_point_glob_with_dot_dot_is_skipped_with_a_warning() {
+        let mut warnings = Vec::new();
+        let globs = build_entry_point_globs(
+            Path::new("/repo"),
+            &["../outside/**".to_string()],
+            &mut warnings,
+        );
+
+        assert!(globs.is_empty());
+        assert_eq!(
+            warnings,
+            vec!["unsupported entryPoints glob with '..': ../outside/**".to_string()]
+        );
     }
 
     #[test]

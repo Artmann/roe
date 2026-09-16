@@ -109,6 +109,36 @@ fn config_ignore_yaml_filters_out_ignored_folder() {
 }
 
 #[test]
+fn config_entry_points_json_roots_matching_files_and_what_they_reference() {
+    // Plugins/CustomPlugin.cs is only alive through the config's
+    // `entryPoints` glob, and PluginHelper is only alive through the plugin
+    // — proving an entry-point file keeps its references alive, which a
+    // plain `ignore` glob would not.
+    let output = roe()
+        .args(["dead-code", &fixture("config_entry_points_json")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("StillDead.cs"));
+    assert!(!stdout.contains("Plugins"));
+    assert!(!stdout.contains("PluginHelper"));
+}
+
+#[test]
+fn config_entry_points_yaml_roots_matching_files_and_what_they_reference() {
+    let output = roe()
+        .args(["dead-code", &fixture("config_entry_points_yaml")])
+        .output()
+        .expect("command runs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("StillDead.cs"));
+    assert!(!stdout.contains("Plugins"));
+    assert!(!stdout.contains("PluginHelper"));
+}
+
+#[test]
 fn dead_code_scoped_ignore_json_drops_findings_in_matching_files() {
     let output = roe()
         .args(["dead-code", &fixture("dead_code_scoped_ignore_json")])

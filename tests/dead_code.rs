@@ -11,7 +11,8 @@ fn fixture(name: &str) -> PathBuf {
 
 /// Sorted (kind, name) pairs for stable assertions.
 fn findings(name: &str, aggressive: bool) -> Vec<(FindingKind, String)> {
-    let analysis = analyze(&fixture(name), aggressive, &[], &[]).expect("analysis should succeed");
+    let analysis =
+        analyze(&fixture(name), aggressive, &[], &[], &[]).expect("analysis should succeed");
     let mut pairs: Vec<(FindingKind, String)> = analysis
         .result
         .findings
@@ -131,6 +132,7 @@ fn library_projects_flag_protects_a_named_project_despite_a_sibling_executable()
         false,
         &[],
         &["Lib".to_string()],
+        &[],
     )
     .expect("analysis should succeed");
     assert!(analysis.result.findings.is_empty());
@@ -211,6 +213,7 @@ fn manual_roots_rescue_symbols() {
         false,
         &["ConsoleApp.ConsoleGreeter.UnusedHelper".to_string()],
         &[],
+        &[],
     )
     .expect("analysis should succeed");
     let names: Vec<&str> = analysis
@@ -223,8 +226,53 @@ fn manual_roots_rescue_symbols() {
 }
 
 #[test]
+fn entry_point_files_root_every_declaration_they_contain() {
+    let analysis = analyze(
+        &fixture("console_app"),
+        false,
+        &[],
+        &[],
+        &["ConsoleApp/DeadClass.cs".to_string()],
+    )
+    .expect("analysis should succeed");
+    let mut pairs: Vec<(FindingKind, String)> = analysis
+        .result
+        .findings
+        .iter()
+        .map(|f| (f.kind, f.name.clone()))
+        .collect();
+    pairs.sort_by(|a, b| a.1.cmp(&b.1));
+
+    assert_findings(
+        pairs,
+        vec![member("ConsoleApp.ConsoleGreeter.UnusedHelper")],
+    );
+}
+
+#[test]
+fn an_entry_point_glob_matching_no_file_surfaces_a_note() {
+    let analysis = analyze(
+        &fixture("console_app"),
+        false,
+        &[],
+        &[],
+        &["Plugins/**".to_string()],
+    )
+    .expect("analysis should succeed");
+
+    assert!(
+        analysis
+            .result
+            .notes
+            .contains(&"entryPoints Plugins/**: no matching file found".to_string()),
+        "got notes {:?}",
+        analysis.result.notes
+    );
+}
+
+#[test]
 fn nonexistent_path_errors() {
-    assert!(analyze(&fixture("does_not_exist"), false, &[], &[]).is_err());
+    assert!(analyze(&fixture("does_not_exist"), false, &[], &[], &[]).is_err());
 }
 
 #[test]

@@ -440,6 +440,7 @@ walking up from the analysis root to the nearest directory containing one
 {
   "aggressive": true,
   "roots": ["MyApp.Program.Main"],
+  "entryPoints": ["Jobs/", "Api/Handlers/**/*.cs"],
   "libraryProjects": ["MyLib"],
   "ignore": ["Migrations/**", "Generated/", "**/*.designer.cs"],
   "deadCode": {
@@ -471,7 +472,11 @@ matches the whole directory, so `"Generated/"` needs no `**`). `aggressive`,
 `roots`, and `libraryProjects` set defaults for the matching CLI flags: an
 explicit `--aggressive`, `--root`, or `--library` always wins, otherwise the
 config's value applies, otherwise the built-in default (`false` / no extra
-roots / no extra library projects). The same `ignore` list also applies to
+roots / no extra library projects). `entryPoints` globs are the file-level
+counterpart to `roots`: every declaration in a matching file is treated as
+an entry point, so the file and everything it references count as used —
+unlike an `ignore` glob, which only drops the findings in the matching file
+itself. The same `ignore` list also applies to
 `roe dupes`, since a duplicate spans multiple files and doesn't map cleanly
 onto a single-line inline suppression comment. Each command's section takes
 an `ignore` list of its own with the same rules, unioned with the top-level

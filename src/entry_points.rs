@@ -1,3 +1,4 @@
+use crate::config::EntryPointGlob;
 use crate::extract::Interner;
 
 use crate::extract::FileFacts;
@@ -188,6 +189,46 @@ pub fn mark_roots(
         }
         if !matched {
             notes.push(format!("--root {manual}: no matching symbol found"));
+        }
+    }
+
+    notes
+}
+
+/// Root every declaration in the files the config's `entryPoints` globs
+/// match, so each matching file and everything it references count as used.
+/// This is the file-level counterpart to `roots`: `roots` names one symbol,
+/// an entry-point file keeps its whole contents alive. Returns notes to
+/// surface in the report (a pattern that matches no file at all).
+pub fn mark_entry_point_files(
+    resolution: &mut Resolution,
+    workspace: &Workspace,
+    entry_point_globs: &[EntryPointGlob],
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    let mut matched_files = vec![false; workspace.files.len()];
+
+    for glob in entry_point_globs {
+        let mut matched = false;
+
+        for file in &workspace.files {
+            if glob.matcher.is_match(&file.path) {
+                matched_files[file.id.index()] = true;
+                matched = true;
+            }
+        }
+
+        if !matched {
+            notes.push(format!(
+                "entryPoints {}: no matching file found",
+                glob.pattern
+            ));
+        }
+    }
+
+    for symbol in &mut resolution.symbols {
+        if matched_files[symbol.file.index()] {
+            symbol.flags |= SymbolFlags::ROOT;
         }
     }
 
