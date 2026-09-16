@@ -26,7 +26,7 @@ clap = { version = "4.6.3", features = ["derive"] }
 colored = "3.1.1"
 dunce = "1.0.5"
 fixedbitset = "0.5.7"
-gix = { version = "0.86.0", default-features = false, features = ["blob-diff", "max-performance-safe", "revision", "sha1"] }
+gix = { version = "0.87.1", default-features = false, features = ["blob-diff", "max-performance-safe", "revision", "sha1"] }
 globset = "0.4.19"
 ignore = "0.4.31"
 lasso = { version = "0.7.3", features = ["multi-threaded"] }
