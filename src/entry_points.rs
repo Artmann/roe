@@ -56,27 +56,7 @@ pub fn mark_roots(
 ) -> Vec<String> {
     let mut notes = Vec::new();
 
-    // Library mode: nothing executable anywhere — the public API surface is
-    // the consumer contract, so only internal/private dead code is
-    // meaningful. Test projects do NOT disable it (a lib + its tests is
-    // still a library package). The Main/top-level-statements heuristic
-    // applies only when no project files exist (bare directories) — when
-    // csproj metadata is present, trust OutputType: a benchmark harness's
-    // Main must not expose a whole library's public API to analysis.
-    let main_name = rodeo.get_or_intern("Main");
-    let no_project_files = workspace.projects.iter().all(|p| p.csproj_path.is_none());
-    let has_executable = workspace
-        .projects
-        .iter()
-        .any(|p| p.is_executable() && !p.is_auxiliary())
-        || (no_project_files
-            && (facts.iter().any(|f| f.has_top_level_statements)
-                || resolution.symbols.iter().any(|s| {
-                    s.kind == SymbolKind::Member(MemberKind::Method)
-                        && s.name == main_name
-                        && s.modifiers.contains(Modifiers::STATIC)
-                })));
-    let library_mode = !has_executable;
+    let library_mode = !has_executable(resolution, workspace, facts, rodeo);
     if library_mode {
         notes.push(
             "library mode: no executable or test project found — public API is treated as used; \
@@ -85,24 +65,7 @@ pub fn mark_roots(
         );
     }
 
-    let inert: Vec<lasso::Spur> = INERT_ATTRIBUTES
-        .iter()
-        .flat_map(|name| {
-            [
-                rodeo.get_or_intern(name),
-                rodeo.get_or_intern(format!("{name}Attribute")),
-            ]
-        })
-        .collect();
-    let magic_methods: Vec<lasso::Spur> = MAGIC_METHOD_NAMES
-        .iter()
-        .map(|name| rodeo.get_or_intern(name))
-        .collect();
-    let startup = rodeo.get_or_intern("Startup");
-    let compiler_polyfill_fqns: Vec<lasso::Spur> = COMPILER_POLYFILL_FQNS
-        .iter()
-        .map(|fqn| rodeo.get_or_intern(fqn))
-        .collect();
+    let lookups = RootLookups::intern(rodeo);
 
     for index in 0..resolution.symbols.len() {
         let symbol = &resolution.symbols[index];
@@ -110,48 +73,17 @@ pub fn mark_roots(
         let project = file.project.map(|p| &workspace.projects[p.index()]);
         let in_test_project = project.is_some_and(|p| p.is_test());
 
-        let mut is_root = false;
-
-        match symbol.kind {
+        let mut is_root = match symbol.kind {
             // File roots own top-level statements and assembly attributes.
-            SymbolKind::FileRoot => is_root = true,
-
+            SymbolKind::FileRoot => true,
             SymbolKind::Member(MemberKind::Method) => {
-                // static Main — the classic entry point. Hosting-convention
-                // methods (Startup.ConfigureServices/Configure) are invoked
-                // reflectively.
-                if magic_methods.contains(&symbol.name) {
-                    let is_main = rodeo.resolve(&symbol.name) == "Main";
-                    if !is_main || symbol.modifiers.contains(Modifiers::STATIC) {
-                        is_root = true;
-                    }
-                }
-                // Controller actions: public methods on controller types.
-                if let Some(parent) = symbol.parent
-                    && is_controller(&resolution.symbols[parent.index()], rodeo)
-                    && symbol.modifiers.contains(Modifiers::PUBLIC)
-                {
-                    is_root = true;
-                }
+                lookups.is_method_root(symbol, resolution, rodeo)
             }
+            SymbolKind::Type(_) => lookups.is_type_root(symbol, rodeo),
+            SymbolKind::Member(_) => false,
+        };
 
-            SymbolKind::Type(_) => {
-                if is_controller(symbol, rodeo)
-                    || symbol.name == startup
-                    || symbol
-                        .fqn
-                        .is_some_and(|fqn| compiler_polyfill_fqns.contains(&fqn))
-                {
-                    is_root = true;
-                }
-            }
-
-            SymbolKind::Member(_) => {}
-        }
-
-        // Any non-inert attribute signals framework consumption ([Fact],
-        // [HttpGet], [JsonProperty], [UsedImplicitly], custom markers...).
-        if !symbol.attributes.is_empty() && symbol.attributes.iter().any(|a| !inert.contains(a)) {
+        if lookups.has_framework_attribute(symbol) {
             is_root = true;
         }
 
@@ -177,7 +109,130 @@ pub fn mark_roots(
         }
     }
 
-    // Manual roots: match fully-qualified display names.
+    mark_manual_roots(resolution, manual_roots, rodeo, &mut notes);
+
+    notes
+}
+
+/// Whether anything in the workspace is executable. When nothing is, library
+/// mode kicks in: the public API surface is the consumer contract, so only
+/// internal/private dead code is meaningful. Test projects do NOT count (a
+/// lib + its tests is still a library package). The Main/top-level-statements
+/// heuristic applies only when no project files exist (bare directories) —
+/// when csproj metadata is present, trust OutputType: a benchmark harness's
+/// Main must not expose a whole library's public API to analysis.
+fn has_executable(
+    resolution: &Resolution,
+    workspace: &Workspace,
+    facts: &[FileFacts],
+    rodeo: &Interner,
+) -> bool {
+    if workspace
+        .projects
+        .iter()
+        .any(|p| p.is_executable() && !p.is_auxiliary())
+    {
+        return true;
+    }
+
+    let no_project_files = workspace.projects.iter().all(|p| p.csproj_path.is_none());
+    if !no_project_files {
+        return false;
+    }
+
+    let main_name = rodeo.get_or_intern("Main");
+
+    facts.iter().any(|f| f.has_top_level_statements)
+        || resolution.symbols.iter().any(|s| {
+            s.kind == SymbolKind::Member(MemberKind::Method)
+                && s.name == main_name
+                && s.modifiers.contains(Modifiers::STATIC)
+        })
+}
+
+/// The interned name tables the per-symbol root checks match against.
+struct RootLookups {
+    compiler_polyfill_fqns: Vec<lasso::Spur>,
+    inert_attributes: Vec<lasso::Spur>,
+    magic_methods: Vec<lasso::Spur>,
+    startup: lasso::Spur,
+}
+
+impl RootLookups {
+    fn intern(rodeo: &Interner) -> Self {
+        RootLookups {
+            compiler_polyfill_fqns: COMPILER_POLYFILL_FQNS
+                .iter()
+                .map(|fqn| rodeo.get_or_intern(fqn))
+                .collect(),
+            inert_attributes: INERT_ATTRIBUTES
+                .iter()
+                .flat_map(|name| {
+                    [
+                        rodeo.get_or_intern(name),
+                        rodeo.get_or_intern(format!("{name}Attribute")),
+                    ]
+                })
+                .collect(),
+            magic_methods: MAGIC_METHOD_NAMES
+                .iter()
+                .map(|name| rodeo.get_or_intern(name))
+                .collect(),
+            startup: rodeo.get_or_intern("Startup"),
+        }
+    }
+
+    /// static Main — the classic entry point. Hosting-convention methods
+    /// (Startup.ConfigureServices/Configure) are invoked reflectively, and
+    /// controller actions (public methods on controller types) by routing.
+    fn is_method_root(
+        &self,
+        symbol: &crate::resolve::Symbol,
+        resolution: &Resolution,
+        rodeo: &Interner,
+    ) -> bool {
+        if self.magic_methods.contains(&symbol.name) {
+            let is_main = rodeo.resolve(&symbol.name) == "Main";
+            if !is_main || symbol.modifiers.contains(Modifiers::STATIC) {
+                return true;
+            }
+        }
+
+        symbol.parent.is_some_and(|parent| {
+            is_controller(&resolution.symbols[parent.index()], rodeo)
+                && symbol.modifiers.contains(Modifiers::PUBLIC)
+        })
+    }
+
+    /// Controllers and Startup are instantiated by the host; compiler
+    /// polyfills are referenced only from emitted IL.
+    fn is_type_root(&self, symbol: &crate::resolve::Symbol, rodeo: &Interner) -> bool {
+        is_controller(symbol, rodeo)
+            || symbol.name == self.startup
+            || symbol
+                .fqn
+                .is_some_and(|fqn| self.compiler_polyfill_fqns.contains(&fqn))
+    }
+
+    /// Any non-inert attribute signals framework consumption ([Fact],
+    /// [HttpGet], [JsonProperty], [UsedImplicitly], custom markers...).
+    fn has_framework_attribute(&self, symbol: &crate::resolve::Symbol) -> bool {
+        !symbol.attributes.is_empty()
+            && symbol
+                .attributes
+                .iter()
+                .any(|a| !self.inert_attributes.contains(a))
+    }
+}
+
+/// Manual roots: match fully-qualified display names, noting any that match
+/// nothing so a stale `--root` can't silently stop protecting its symbol.
+fn mark_manual_roots(
+    resolution: &mut Resolution,
+    manual_roots: &[String],
+    rodeo: &Interner,
+    notes: &mut Vec<String>,
+) {
     for manual in manual_roots {
         let mut matched = false;
         for index in 0..resolution.symbols.len() {
@@ -191,8 +246,6 @@ pub fn mark_roots(
             notes.push(format!("--root {manual}: no matching symbol found"));
         }
     }
-
-    notes
 }
 
 /// Root every declaration in the files the config's `entryPoints` globs

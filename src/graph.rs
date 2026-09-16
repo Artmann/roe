@@ -266,38 +266,8 @@ pub fn build_graph(
     let mut name_lists: Vec<Vec<Spur>> = vec![Vec::new(); symbol_count];
     let mut scan_targets: rustc_hash::FxHashSet<SymbolId> = rustc_hash::FxHashSet::default();
 
-    // Project-wide global usings: `global using` directives from any file of
-    // the project, plus csproj <Using Include> items.
-    let mut project_globals: FxHashMap<ProjectId, Vec<Vec<Spur>>> = FxHashMap::default();
-    for project in &workspace.projects {
-        let mut globals: Vec<Vec<Spur>> = Vec::new();
-        for using in &project.extra_usings {
-            globals.push(using.split('.').map(|s| rodeo.get_or_intern(s)).collect());
-        }
-        project_globals.insert(project.id, globals);
-    }
-    let mut all_globals: Vec<Vec<Spur>> = Vec::new();
-    for file_facts in facts {
-        for using in &file_facts.usings {
-            if using.is_global && using.alias.is_none() && !using.is_static {
-                let project = workspace.files[file_facts.file.index()].project;
-                all_globals.push(using.path.clone());
-                if let Some(project) = project
-                    && let Some(globals) = project_globals.get_mut(&project)
-                {
-                    globals.push(using.path.clone());
-                }
-            }
-        }
-    }
-
-    // Render the globals once here rather than per file: every file in a
-    // project sees the same list, and orphan files all see `all_globals`.
-    let project_global_strings: FxHashMap<ProjectId, Vec<String>> = project_globals
-        .iter()
-        .map(|(&project, globals)| (project, render_paths(globals, rodeo)))
-        .collect();
-    let all_global_strings = render_paths(&all_globals, rodeo);
+    let (project_global_strings, all_global_strings) =
+        collect_global_usings(workspace, facts, rodeo);
 
     let resolver = Resolver {
         resolution: &*resolution,
@@ -322,56 +292,16 @@ pub fn build_graph(
         })
         .collect();
 
-    // Merge slot-indexed output back onto symbols. Both lists are sorted and
-    // deduped in the CSR flatten below, so merge order cannot affect the graph.
-    for (file_facts, output) in facts.iter().zip(per_file) {
-        let local_map = &resolution.decl_map[file_facts.file.index()];
-        let file_root = resolution.file_roots[file_facts.file.index()];
-        let origin_of = |slot: usize| {
-            if slot == local_map.len() {
-                file_root
-            } else {
-                local_map[slot]
-            }
-        };
+    merge_file_outputs(
+        resolution,
+        facts,
+        per_file,
+        &mut edge_lists,
+        &mut name_lists,
+        &mut scan_targets,
+    );
 
-        for (slot, list) in output.edges.into_iter().enumerate() {
-            if !list.is_empty() {
-                edge_lists[origin_of(slot).index()].extend(list);
-            }
-        }
-        for (slot, list) in output.names.into_iter().enumerate() {
-            if !list.is_empty() {
-                name_lists[origin_of(slot).index()].extend(list);
-            }
-        }
-        scan_targets.extend(output.scan_targets);
-    }
-
-    // Root every concrete type whose base closure reaches a scan target:
-    // reflection registration (`GetExports<IImageProvider>()`) instantiates
-    // implementations that are never named in source.
-    if !scan_targets.is_empty() {
-        let mut scan_roots: Vec<SymbolId> = Vec::new();
-        for symbol in &resolution.symbols {
-            if !symbol.kind.is_type()
-                || matches!(
-                    symbol.kind,
-                    crate::model::SymbolKind::Type(crate::model::TypeKind::Interface)
-                )
-                || symbol.modifiers.contains(crate::model::Modifiers::ABSTRACT)
-                || symbol.base_names.is_empty()
-            {
-                continue;
-            }
-            if base_closure_hits(resolution, symbol, &scan_targets) {
-                scan_roots.push(symbol.id);
-            }
-        }
-        for id in scan_roots {
-            resolution.symbols[id.index()].flags |= SymbolFlags::ROOT;
-        }
-    }
+    mark_scan_target_roots(resolution, &scan_targets);
 
     // Containment-down lists from LIVE_WITH_TYPE flags.
     let mut live_children: Vec<SmallVec<[SymbolId; 2]>> = vec![SmallVec::new(); symbol_count];
@@ -410,6 +340,116 @@ pub fn build_graph(
         member_names,
         member_name_ranges,
         live_children,
+    }
+}
+
+/// Project-wide global usings: `global using` directives from any file of a
+/// project, plus csproj `<Using Include>` items. Rendered to dotted strings
+/// once here rather than per file — every file in a project sees the same
+/// list, and orphan files all see the all-projects list.
+fn collect_global_usings(
+    workspace: &Workspace,
+    facts: &[FileFacts],
+    rodeo: &Interner,
+) -> (FxHashMap<ProjectId, Vec<String>>, Vec<String>) {
+    let mut project_globals: FxHashMap<ProjectId, Vec<Vec<Spur>>> = FxHashMap::default();
+    for project in &workspace.projects {
+        let mut globals: Vec<Vec<Spur>> = Vec::new();
+        for using in &project.extra_usings {
+            globals.push(using.split('.').map(|s| rodeo.get_or_intern(s)).collect());
+        }
+        project_globals.insert(project.id, globals);
+    }
+
+    let mut all_globals: Vec<Vec<Spur>> = Vec::new();
+    for file_facts in facts {
+        for using in &file_facts.usings {
+            if using.is_global && using.alias.is_none() && !using.is_static {
+                let project = workspace.files[file_facts.file.index()].project;
+                all_globals.push(using.path.clone());
+                if let Some(project) = project
+                    && let Some(globals) = project_globals.get_mut(&project)
+                {
+                    globals.push(using.path.clone());
+                }
+            }
+        }
+    }
+
+    let project_global_strings: FxHashMap<ProjectId, Vec<String>> = project_globals
+        .iter()
+        .map(|(&project, globals)| (project, render_paths(globals, rodeo)))
+        .collect();
+
+    (project_global_strings, render_paths(&all_globals, rodeo))
+}
+
+/// Merge slot-indexed per-file output back onto symbols. Both lists are
+/// sorted and deduped in the CSR flatten afterwards, so merge order cannot
+/// affect the graph.
+fn merge_file_outputs(
+    resolution: &Resolution,
+    facts: &[FileFacts],
+    per_file: Vec<FileOutput>,
+    edge_lists: &mut [Vec<SymbolId>],
+    name_lists: &mut [Vec<Spur>],
+    scan_targets: &mut rustc_hash::FxHashSet<SymbolId>,
+) {
+    for (file_facts, output) in facts.iter().zip(per_file) {
+        let local_map = &resolution.decl_map[file_facts.file.index()];
+        let file_root = resolution.file_roots[file_facts.file.index()];
+        let origin_of = |slot: usize| {
+            if slot == local_map.len() {
+                file_root
+            } else {
+                local_map[slot]
+            }
+        };
+
+        for (slot, list) in output.edges.into_iter().enumerate() {
+            if !list.is_empty() {
+                edge_lists[origin_of(slot).index()].extend(list);
+            }
+        }
+        for (slot, list) in output.names.into_iter().enumerate() {
+            if !list.is_empty() {
+                name_lists[origin_of(slot).index()].extend(list);
+            }
+        }
+        scan_targets.extend(output.scan_targets);
+    }
+}
+
+/// Root every concrete type whose base closure reaches a scan target:
+/// reflection registration (`GetExports<IImageProvider>()`) instantiates
+/// implementations that are never named in source.
+fn mark_scan_target_roots(
+    resolution: &mut Resolution,
+    scan_targets: &rustc_hash::FxHashSet<SymbolId>,
+) {
+    if scan_targets.is_empty() {
+        return;
+    }
+
+    let mut scan_roots: Vec<SymbolId> = Vec::new();
+    for symbol in &resolution.symbols {
+        if !symbol.kind.is_type()
+            || matches!(
+                symbol.kind,
+                crate::model::SymbolKind::Type(crate::model::TypeKind::Interface)
+            )
+            || symbol.modifiers.contains(crate::model::Modifiers::ABSTRACT)
+            || symbol.base_names.is_empty()
+        {
+            continue;
+        }
+        if base_closure_hits(resolution, symbol, scan_targets) {
+            scan_roots.push(symbol.id);
+        }
+    }
+
+    for id in scan_roots {
+        resolution.symbols[id.index()].flags |= SymbolFlags::ROOT;
     }
 }
 

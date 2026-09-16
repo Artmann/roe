@@ -286,163 +286,22 @@ fn collect_findings(
     let mut findings = Vec::new();
 
     for file_facts in facts {
-        if file_facts.is_generated {
-            continue;
-        }
-
-        let file = &workspace.files[file_facts.file.index()];
-        if thresholds.exclude_tests && in_test_project(workspace, file.project) {
-            continue;
-        }
-
-        let project = project_name(workspace, file.project);
-        let local_map = &resolution.decl_map[file_facts.file.index()];
-        let names = member_names(resolution, file_facts, local_map, rodeo);
-
-        for (local_index, decl) in file_facts.decls.iter().enumerate() {
-            if !decl.kind.is_member() || !decl.has_body {
-                continue;
-            }
-
-            let name = names[local_index].clone();
-
-            if decl.cyclomatic > thresholds.max_complexity {
-                findings.push(HealthFinding {
-                    kind: HealthFindingKind::HighComplexity,
-                    name: name.clone(),
-                    project: project.clone(),
-                    file: file.path.clone(),
-                    line: decl.line,
-                    column: decl.column,
-                    metric: decl.cyclomatic,
-                    threshold: thresholds.max_complexity,
-                    breakdown: None,
-                    parameters: None,
-                });
-            }
-
-            if decl.cognitive > thresholds.max_cognitive {
-                findings.push(HealthFinding {
-                    kind: HealthFindingKind::HighCognitiveComplexity,
-                    name: name.clone(),
-                    project: project.clone(),
-                    file: file.path.clone(),
-                    line: decl.line,
-                    column: decl.column,
-                    metric: decl.cognitive,
-                    threshold: thresholds.max_cognitive,
-                    breakdown: None,
-                    parameters: None,
-                });
-            }
-
-            if decl.body_lines > thresholds.max_method_lines {
-                findings.push(HealthFinding {
-                    kind: HealthFindingKind::LongMethod,
-                    name: name.clone(),
-                    project: project.clone(),
-                    file: file.path.clone(),
-                    line: decl.line,
-                    column: decl.column,
-                    metric: decl.body_lines,
-                    threshold: thresholds.max_method_lines,
-                    breakdown: None,
-                    parameters: None,
-                });
-            }
-
-            // Only the required parameters are measured — the threshold is
-            // about call-site burden, and a defaulted or `out` parameter puts
-            // none on the caller. The full declaration rides along so the
-            // report can still show it.
-            if decl.parameters.required > thresholds.max_parameters {
-                findings.push(HealthFinding {
-                    kind: HealthFindingKind::TooManyParameters,
-                    name,
-                    project: project.clone(),
-                    file: file.path.clone(),
-                    line: decl.line,
-                    column: decl.column,
-                    metric: decl.parameters.required,
-                    threshold: thresholds.max_parameters,
-                    breakdown: None,
-                    parameters: Some(decl.parameters),
-                });
-            }
-        }
-
-        if file_facts.line_count > thresholds.max_file_lines {
-            findings.push(HealthFinding {
-                kind: HealthFindingKind::LargeFile,
-                name: crate::paths::display(
-                    file.path
-                        .strip_prefix(&workspace.root)
-                        .unwrap_or(&file.path),
-                ),
-                project,
-                file: file.path.clone(),
-                line: 1,
-                column: 1,
-                metric: file_facts.line_count,
-                threshold: thresholds.max_file_lines,
-                breakdown: None,
-                parameters: None,
-            });
-        }
+        collect_file_findings(
+            resolution,
+            workspace,
+            file_facts,
+            rodeo,
+            thresholds,
+            &mut findings,
+        );
     }
 
-    // Kept as a breakdown rather than a bare count so the report can say what
-    // the members *are*: thirty auto-properties is a data holder, thirty
-    // methods is a god class, and only one of those is worth acting on.
-    let mut member_counts: FxHashMap<SymbolId, MemberBreakdown> = FxHashMap::default();
-    for symbol in &resolution.symbols {
-        if symbol.flags.contains(SymbolFlags::GENERATED) {
-            continue;
-        }
-
-        let (SymbolKind::Member(kind), Some(parent)) = (symbol.kind, symbol.parent) else {
-            continue;
-        };
-
-        member_counts
-            .entry(parent)
-            .or_default()
-            .record(kind, symbol.modifiers);
-    }
+    collect_large_type_findings(resolution, workspace, rodeo, thresholds, &mut findings);
 
     // Type-level dependency edges. Not reported as a finding of their own —
     // a high dependency count is normal in constructor-injected code — but
     // they're the edge set cycle detection runs over.
     let fan_out = coupling::fan_out(resolution, symbol_graph);
-
-    for symbol in &resolution.symbols {
-        if !symbol.kind.is_type() || symbol.flags.contains(SymbolFlags::GENERATED) {
-            continue;
-        }
-
-        let breakdown = member_counts.get(&symbol.id).copied().unwrap_or_default();
-        if breakdown.total() <= thresholds.max_type_members {
-            continue;
-        }
-
-        let file = &workspace.files[symbol.file.index()];
-        if thresholds.exclude_tests && in_test_project(workspace, file.project) {
-            continue;
-        }
-
-        findings.push(HealthFinding {
-            kind: HealthFindingKind::LargeType,
-            name: resolution.display_name(symbol.id, rodeo),
-            project: project_name(workspace, file.project),
-            file: file.path.clone(),
-            line: symbol.line,
-            column: symbol.column,
-            metric: breakdown.total(),
-            threshold: thresholds.max_type_members,
-            breakdown: Some(breakdown),
-            parameters: None,
-        });
-    }
 
     findings.sort_by(|a, b| {
         a.file
@@ -486,6 +345,169 @@ fn collect_findings(
         .collect();
 
     (findings, cycles)
+}
+
+/// Member-level (complexity, method length, parameter count) and file-level
+/// (line count) findings for one file.
+fn collect_file_findings(
+    resolution: &Resolution,
+    workspace: &Workspace,
+    file_facts: &extract::FileFacts,
+    rodeo: &Interner,
+    thresholds: Thresholds,
+    findings: &mut Vec<HealthFinding>,
+) {
+    if file_facts.is_generated {
+        return;
+    }
+
+    let file = &workspace.files[file_facts.file.index()];
+    if thresholds.exclude_tests && in_test_project(workspace, file.project) {
+        return;
+    }
+
+    let project = project_name(workspace, file.project);
+    let local_map = &resolution.decl_map[file_facts.file.index()];
+    let names = member_names(resolution, file_facts, local_map, rodeo);
+
+    for (local_index, decl) in file_facts.decls.iter().enumerate() {
+        if !decl.kind.is_member() || !decl.has_body {
+            continue;
+        }
+
+        let name = &names[local_index];
+        let mut push_member_finding = |kind, metric, threshold, parameters| {
+            findings.push(HealthFinding {
+                kind,
+                name: name.clone(),
+                project: project.clone(),
+                file: file.path.clone(),
+                line: decl.line,
+                column: decl.column,
+                metric,
+                threshold,
+                breakdown: None,
+                parameters,
+            });
+        };
+
+        if decl.cyclomatic > thresholds.max_complexity {
+            push_member_finding(
+                HealthFindingKind::HighComplexity,
+                decl.cyclomatic,
+                thresholds.max_complexity,
+                None,
+            );
+        }
+
+        if decl.cognitive > thresholds.max_cognitive {
+            push_member_finding(
+                HealthFindingKind::HighCognitiveComplexity,
+                decl.cognitive,
+                thresholds.max_cognitive,
+                None,
+            );
+        }
+
+        if decl.body_lines > thresholds.max_method_lines {
+            push_member_finding(
+                HealthFindingKind::LongMethod,
+                decl.body_lines,
+                thresholds.max_method_lines,
+                None,
+            );
+        }
+
+        // Only the required parameters are measured — the threshold is
+        // about call-site burden, and a defaulted or `out` parameter puts
+        // none on the caller. The full declaration rides along so the
+        // report can still show it.
+        if decl.parameters.required > thresholds.max_parameters {
+            push_member_finding(
+                HealthFindingKind::TooManyParameters,
+                decl.parameters.required,
+                thresholds.max_parameters,
+                Some(decl.parameters),
+            );
+        }
+    }
+
+    if file_facts.line_count > thresholds.max_file_lines {
+        findings.push(HealthFinding {
+            kind: HealthFindingKind::LargeFile,
+            name: crate::paths::display(
+                file.path
+                    .strip_prefix(&workspace.root)
+                    .unwrap_or(&file.path),
+            ),
+            project,
+            file: file.path.clone(),
+            line: 1,
+            column: 1,
+            metric: file_facts.line_count,
+            threshold: thresholds.max_file_lines,
+            breakdown: None,
+            parameters: None,
+        });
+    }
+}
+
+/// Types with more members than the threshold allows.
+///
+/// The count is kept as a breakdown rather than a bare number so the report
+/// can say what the members *are*: thirty auto-properties is a data holder,
+/// thirty methods is a god class, and only one of those is worth acting on.
+fn collect_large_type_findings(
+    resolution: &Resolution,
+    workspace: &Workspace,
+    rodeo: &Interner,
+    thresholds: Thresholds,
+    findings: &mut Vec<HealthFinding>,
+) {
+    let mut member_counts: FxHashMap<SymbolId, MemberBreakdown> = FxHashMap::default();
+    for symbol in &resolution.symbols {
+        if symbol.flags.contains(SymbolFlags::GENERATED) {
+            continue;
+        }
+
+        let (SymbolKind::Member(kind), Some(parent)) = (symbol.kind, symbol.parent) else {
+            continue;
+        };
+
+        member_counts
+            .entry(parent)
+            .or_default()
+            .record(kind, symbol.modifiers);
+    }
+
+    for symbol in &resolution.symbols {
+        if !symbol.kind.is_type() || symbol.flags.contains(SymbolFlags::GENERATED) {
+            continue;
+        }
+
+        let breakdown = member_counts.get(&symbol.id).copied().unwrap_or_default();
+        if breakdown.total() <= thresholds.max_type_members {
+            continue;
+        }
+
+        let file = &workspace.files[symbol.file.index()];
+        if thresholds.exclude_tests && in_test_project(workspace, file.project) {
+            continue;
+        }
+
+        findings.push(HealthFinding {
+            kind: HealthFindingKind::LargeType,
+            name: resolution.display_name(symbol.id, rodeo),
+            project: project_name(workspace, file.project),
+            file: file.path.clone(),
+            line: symbol.line,
+            column: symbol.column,
+            metric: breakdown.total(),
+            threshold: thresholds.max_type_members,
+            breakdown: Some(breakdown),
+            parameters: None,
+        });
+    }
 }
 
 /// Display names for every declaration in one file, indexed by local decl

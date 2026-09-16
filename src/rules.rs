@@ -20,100 +20,20 @@ pub fn apply_kill_list(
         let symbol = &resolution.symbols[index];
         let mut flags = symbol.flags;
 
-        match symbol.kind {
-            SymbolKind::Member(kind) => {
-                // Structurally invoked: call sites never name these.
-                if matches!(
-                    kind,
-                    MemberKind::Constructor
-                        | MemberKind::StaticConstructor
-                        | MemberKind::Destructor
-                        | MemberKind::Operator
-                        | MemberKind::ConversionOperator
-                        | MemberKind::Indexer
-                ) {
-                    flags |= SymbolFlags::LIVE_WITH_TYPE;
-                }
+        if let SymbolKind::Member(kind) = symbol.kind {
+            flags |= structural_member_flags(symbol, kind, rodeo, aggressive);
+            flags |= interface_satisfaction_flags(symbol, &interface_member_names);
 
-                // Deconstruct: invoked implicitly by `var (a, b) = expr;`
-                // deconstruction syntax — never named at the call site.
-                if kind == MemberKind::Method && rodeo.resolve(&symbol.name) == "Deconstruct" {
-                    flags |= SymbolFlags::LIVE_WITH_TYPE;
-                }
-
-                // Called via base-class or interface dispatch.
-                if symbol.modifiers.contains(Modifiers::OVERRIDE)
-                    || symbol.is_explicit_interface_impl
-                {
-                    flags |= SymbolFlags::LIVE_WITH_TYPE;
-                }
-
-                // Extension-method call sites (`"x".Shout()`) never name the
-                // containing static class, so the type gate must not apply.
-                if symbol.is_extension_method {
-                    flags |= SymbolFlags::NO_TYPE_GATE;
-                }
-
-                // Serializers bind auto-properties reflectively with no name
-                // reference anywhere (DTOs). Only --aggressive flags them.
-                if !aggressive
-                    && symbol.is_auto_property
-                    && matches!(
-                        symbol.visibility(),
-                        Visibility::Public | Visibility::Protected | Visibility::ProtectedInternal
-                    )
-                {
-                    flags |= SymbolFlags::LIVE_WITH_TYPE;
-                }
-
-                // Enum members travel through serialization, Enum.Parse, and
-                // databases without ever being named.
-                if !aggressive && kind == MemberKind::EnumMember {
-                    flags |= SymbolFlags::LIVE_WITH_TYPE;
-                }
-
-                // Partial method with no implementing half in sight: the
-                // implementation comes from a source generator.
-                if kind == MemberKind::Method
-                    && symbol.modifiers.contains(Modifiers::PARTIAL)
-                    && !symbol.has_body
-                {
-                    flags |= SymbolFlags::ROOT;
-                }
-
-                // Interface satisfaction and external-interface heuristic.
-                if let Some(parent) = symbol.parent
-                    && let Some(set) = interface_member_names.get(&parent)
-                {
-                    if set.all_members {
-                        // Type implements an unresolved I-prefixed interface;
-                        // we can't know which members it demands.
-                        let instance = !symbol.modifiers.contains(Modifiers::STATIC);
-                        let visible = matches!(
-                            symbol.visibility(),
-                            Visibility::Public | Visibility::Internal
-                        );
-                        if instance && visible {
-                            flags |= SymbolFlags::LIVE_WITH_TYPE;
-                        }
-                    }
-                    if set.names.contains(&symbol.name) {
-                        flags |= SymbolFlags::LIVE_WITH_TYPE;
-                    }
-                }
-
-                // Without build output (obj/), the generated half of partial
-                // types is invisible — exempt their members entirely.
-                if workspace.missing_obj
-                    && let Some(parent) = symbol.parent
-                    && resolution.symbols[parent.index()]
-                        .modifiers
-                        .contains(Modifiers::PARTIAL)
-                {
-                    flags |= SymbolFlags::LIVE_WITH_TYPE;
-                }
+            // Without build output (obj/), the generated half of partial
+            // types is invisible — exempt their members entirely.
+            if workspace.missing_obj
+                && let Some(parent) = symbol.parent
+                && resolution.symbols[parent.index()]
+                    .modifiers
+                    .contains(Modifiers::PARTIAL)
+            {
+                flags |= SymbolFlags::LIVE_WITH_TYPE;
             }
-            SymbolKind::Type(_) | SymbolKind::FileRoot => {}
         }
 
         // Declarations in generated files are reference-only: rooted so their
@@ -124,6 +44,113 @@ pub fn apply_kill_list(
 
         resolution.symbols[index].flags = flags;
     }
+}
+
+/// The member rules that need nothing but the member's own declaration:
+/// structural invocation, dispatch, extension methods, serializer fodder,
+/// and generator-implemented partials.
+fn structural_member_flags(
+    symbol: &crate::resolve::Symbol,
+    kind: MemberKind,
+    rodeo: &Interner,
+    aggressive: bool,
+) -> SymbolFlags {
+    let mut flags = SymbolFlags::empty();
+
+    // Structurally invoked: call sites never name these.
+    if matches!(
+        kind,
+        MemberKind::Constructor
+            | MemberKind::StaticConstructor
+            | MemberKind::Destructor
+            | MemberKind::Operator
+            | MemberKind::ConversionOperator
+            | MemberKind::Indexer
+    ) {
+        flags |= SymbolFlags::LIVE_WITH_TYPE;
+    }
+
+    // Deconstruct: invoked implicitly by `var (a, b) = expr;`
+    // deconstruction syntax — never named at the call site.
+    if kind == MemberKind::Method && rodeo.resolve(&symbol.name) == "Deconstruct" {
+        flags |= SymbolFlags::LIVE_WITH_TYPE;
+    }
+
+    // Called via base-class or interface dispatch.
+    if symbol.modifiers.contains(Modifiers::OVERRIDE) || symbol.is_explicit_interface_impl {
+        flags |= SymbolFlags::LIVE_WITH_TYPE;
+    }
+
+    // Extension-method call sites (`"x".Shout()`) never name the
+    // containing static class, so the type gate must not apply.
+    if symbol.is_extension_method {
+        flags |= SymbolFlags::NO_TYPE_GATE;
+    }
+
+    // Serializers bind auto-properties reflectively with no name
+    // reference anywhere (DTOs). Only --aggressive flags them.
+    if !aggressive
+        && symbol.is_auto_property
+        && matches!(
+            symbol.visibility(),
+            Visibility::Public | Visibility::Protected | Visibility::ProtectedInternal
+        )
+    {
+        flags |= SymbolFlags::LIVE_WITH_TYPE;
+    }
+
+    // Enum members travel through serialization, Enum.Parse, and
+    // databases without ever being named.
+    if !aggressive && kind == MemberKind::EnumMember {
+        flags |= SymbolFlags::LIVE_WITH_TYPE;
+    }
+
+    // Partial method with no implementing half in sight: the
+    // implementation comes from a source generator.
+    if kind == MemberKind::Method
+        && symbol.modifiers.contains(Modifiers::PARTIAL)
+        && !symbol.has_body
+    {
+        flags |= SymbolFlags::ROOT;
+    }
+
+    flags
+}
+
+/// Interface satisfaction and the external-interface heuristic: a member
+/// whose containing type's base closure demands its name — or implements an
+/// unresolved `I`-prefixed interface whose demands we can't know — stays
+/// alive with its type.
+fn interface_satisfaction_flags(
+    symbol: &crate::resolve::Symbol,
+    interface_member_names: &FxHashMap<SymbolId, SatisfactionSet>,
+) -> SymbolFlags {
+    let mut flags = SymbolFlags::empty();
+
+    let Some(parent) = symbol.parent else {
+        return flags;
+    };
+    let Some(set) = interface_member_names.get(&parent) else {
+        return flags;
+    };
+
+    if set.all_members {
+        // Type implements an unresolved I-prefixed interface;
+        // we can't know which members it demands.
+        let instance = !symbol.modifiers.contains(Modifiers::STATIC);
+        let visible = matches!(
+            symbol.visibility(),
+            Visibility::Public | Visibility::Internal
+        );
+        if instance && visible {
+            flags |= SymbolFlags::LIVE_WITH_TYPE;
+        }
+    }
+    if set.names.contains(&symbol.name) {
+        flags |= SymbolFlags::LIVE_WITH_TYPE;
+    }
+
+    flags
 }
 
 struct SatisfactionSet {
