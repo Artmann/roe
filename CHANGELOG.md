@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0](https://github.com/Artmann/roe/compare/roe-v1.4.0...roe-v1.5.0) (2026-09-16)
+
+
+### Features
+
+* **config:** Add entryPoints globs that root whole files as entry points ([16f4365](https://github.com/Artmann/roe/commit/16f43659e18b4be29444958fb1d491b7685478af))
+
+
+### Bug Fixes
+
+* **deps:** Update gix to 0.87.1 to drop the yanked bisync crate ([5db63ad](https://github.com/Artmann/roe/commit/5db63ad2fb57a44f431f6a75d33fb088728a0688))
+
 ## [1.4.0](https://github.com/Artmann/roe/compare/roe-v1.3.1...roe-v1.4.0) (2026-08-02)
 
 
