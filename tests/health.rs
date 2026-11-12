@@ -430,6 +430,40 @@ fn a_type_and_its_nested_types_are_not_a_cycle_but_cycles_through_them_are() {
 }
 
 #[test]
+fn a_cycle_names_generic_types_with_their_type_parameters() {
+    // `Tween` and `Tween<T>` are different types. Without the type
+    // parameters the cycle between them reads as a type depending on itself.
+    let analysis =
+        analyze(&fixture("health_generic_cycle"), lenient()).expect("analysis should succeed");
+
+    let mut cycles: Vec<Vec<&str>> = analysis
+        .result
+        .cycles
+        .iter()
+        .map(|cycle| {
+            let mut names: Vec<&str> = cycle
+                .path
+                .iter()
+                .chain(&cycle.others)
+                .map(|member| member.name.as_str())
+                .collect();
+            names.sort_unstable();
+
+            names
+        })
+        .collect();
+    cycles.sort();
+
+    assert_eq!(
+        cycles,
+        vec![
+            vec!["App.Pair", "App.Pair<TFirst, TSecond>"],
+            vec!["App.Tween", "App.Tween<T>"],
+        ]
+    );
+}
+
+#[test]
 fn generated_file_is_never_flagged() {
     // Even with thresholds tight enough to flag GeneratedThing.Complex many
     // times over, the generated file must produce nothing.
