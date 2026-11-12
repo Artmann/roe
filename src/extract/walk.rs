@@ -1255,6 +1255,27 @@ class C(int ticks)
     }
 
     #[test]
+    fn a_deconstruction_into_typed_variables_still_declares() {
+        // `(int first, int second) = pair;` puts declaration expressions in
+        // arguments with no `out`. They aren't pointer types, so they are real
+        // declarations and not products.
+        let (facts, rodeo) = extract(
+            r#"
+class C
+{
+    void M((int, int) pair) { (int first, int second) = pair; }
+}
+"#,
+        );
+        let names = ref_names(&facts, &rodeo);
+
+        assert!(
+            !names.contains(&"first".to_string()) && !names.contains(&"second".to_string()),
+            "declared names are not uses, got {names:?}"
+        );
+    }
+
+    #[test]
     fn an_out_pointer_declaration_in_an_argument_still_declares() {
         // `out int* pointer` really is a declaration: `pointer` is a new name,
         // not a use.
