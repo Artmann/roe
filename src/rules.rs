@@ -45,9 +45,8 @@ pub fn apply_kill_list(
                 // the element storage behind every indexer and span access,
                 // which never name it.
                 if kind == MemberKind::Field
-                    && !symbol
-                        .modifiers
-                        .intersects(Modifiers::CONST | Modifiers::STATIC)
+                    && !symbol.modifiers.contains(Modifiers::CONST)
+                    && !symbol.modifiers.contains(Modifiers::STATIC)
                     && let Some(parent) = symbol.parent
                     && is_inline_array(&resolution.symbols[parent.index()].attributes, rodeo)
                 {
