@@ -19,22 +19,39 @@ use crate::resolve::Resolution;
 /// The type "owning" a symbol: itself if it is a type, its containing type
 /// if it is a member. `None` for anything else (file roots, or a member
 /// somehow parented outside a type).
+///
+/// Nested types fold into their outermost containing type. A nested type is
+/// part of the outer type's implementation and can't be moved or reused
+/// without editing it, so `PhaseClock ↔ PhaseClock.Measure` is not coupling
+/// anyone can act on. Edges from a nested type to other types count as edges
+/// from the outer type, so real cycles through a nested type are still found.
 pub fn owning_type(resolution: &Resolution, id: SymbolId) -> Option<SymbolId> {
     let symbol = &resolution.symbols[id.index()];
-    if symbol.kind.is_type() {
-        Some(id)
+
+    let mut owner = if symbol.kind.is_type() {
+        id
     } else if symbol.kind.is_member() {
         symbol
             .parent
-            .filter(|&parent| resolution.symbols[parent.index()].kind.is_type())
+            .filter(|&parent| resolution.symbols[parent.index()].kind.is_type())?
     } else {
-        None
+        return None;
+    };
+
+    while let Some(parent) = resolution.symbols[owner.index()].parent {
+        if !resolution.symbols[parent.index()].kind.is_type() {
+            break;
+        }
+
+        owner = parent;
     }
+
+    Some(owner)
 }
 
 /// Type-level fan-out: for every type, the distinct set of other types it
 /// (or any of its members) references. Self-references are excluded, since
-/// a type using its own members is not coupling.
+/// a type using its own members (or its nested types) is not coupling.
 pub fn fan_out(
     resolution: &Resolution,
     graph: &SymbolGraph,
