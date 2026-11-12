@@ -210,6 +210,21 @@ impl<'a> Walker<'a> {
             }
             "attribute" => self.attribute_ref(node),
 
+            // `Ceiling(A * ticks)` parses as a pointer-typed declaration of
+            // `ticks`. Without `out` or `ref` it is a product: both are uses.
+            "declaration_expression" if is_misparsed_product(node) => {
+                if let Some(operand) = node
+                    .child_by_field_name("type")
+                    .and_then(|pointer| pointer.child_by_field_name("type"))
+                {
+                    self.walk(operand, false);
+                }
+
+                if let Some(operand) = node.child_by_field_name("name") {
+                    self.walk(operand, false);
+                }
+            }
+
             // ---- leaves that never contain references
             "comment"
             | "predefined_type"
@@ -1143,6 +1158,30 @@ fn has_default_value(parameter: Node) -> bool {
     let mut cursor = parameter.walk();
 
     parameter.children(&mut cursor).any(|c| c.kind() == "=")
+}
+
+/// A declaration expression of a pointer type, passed as an argument with no
+/// `out`, `ref` or `in`. C# only allows a declaration there with `out`, so
+/// this is tree-sitter's reading of a product like `A * ticks`.
+fn is_misparsed_product(declaration: Node) -> bool {
+    let is_pointer = declaration
+        .child_by_field_name("type")
+        .is_some_and(|declared| declared.kind() == "pointer_type");
+
+    let Some(argument) = declaration.parent() else {
+        return false;
+    };
+
+    if !is_pointer || argument.kind() != "argument" {
+        return false;
+    }
+
+    let mut cursor = argument.walk();
+    let has_modifier = argument
+        .children(&mut cursor)
+        .any(|child| matches!(child.kind(), "out" | "ref" | "in"));
+
+    !has_modifier
 }
 
 #[cfg(test)]
