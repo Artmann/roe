@@ -111,15 +111,19 @@ impl Resolution {
     pub fn generic_name(&self, id: SymbolId, rodeo: &Interner) -> String {
         let symbol = &self.symbols[id.index()];
 
+        assert!(
+            symbol.kind.is_type(),
+            "generic_name is only defined for types"
+        );
+
+        // A type's parent, when it has one, is the type it is nested in.
         let prefix = match symbol.parent {
-            Some(parent) if self.symbols[parent.index()].kind.is_type() => {
-                format!(
-                    "{}.{}",
-                    self.generic_name(parent, rodeo),
-                    rodeo.resolve(&symbol.name)
-                )
-            }
-            _ => self.display_name(id, rodeo),
+            Some(parent) => format!(
+                "{}.{}",
+                self.generic_name(parent, rodeo),
+                rodeo.resolve(&symbol.name)
+            ),
+            None => self.display_name(id, rodeo),
         };
 
         if symbol.type_parameters.is_empty() {
