@@ -48,6 +48,8 @@ pub struct Symbol {
     pub is_auto_property: bool,
     pub has_body: bool,
     pub arity: u8,
+    /// Type parameter names (types only), shown by [`Resolution::generic_name`].
+    pub type_parameters: SmallVec<[Spur; 2]>,
 }
 
 impl Symbol {
@@ -99,6 +101,39 @@ impl Resolution {
             None => rodeo.resolve(&symbol.name).to_string(),
         }
     }
+
+    /// Like [`Self::display_name`], but every type on the way down carries
+    /// its type parameters: `App.Tween<T>`, `App.Pool<T>.Slot`.
+    ///
+    /// `display_name` stays arity-free because baselines and manual entry
+    /// points match on it. This one is for output where `Tween` and
+    /// `Tween<T>` must read as different types.
+    pub fn generic_name(&self, id: SymbolId, rodeo: &Interner) -> String {
+        let symbol = &self.symbols[id.index()];
+
+        let prefix = match symbol.parent {
+            Some(parent) if self.symbols[parent.index()].kind.is_type() => {
+                format!(
+                    "{}.{}",
+                    self.generic_name(parent, rodeo),
+                    rodeo.resolve(&symbol.name)
+                )
+            }
+            _ => self.display_name(id, rodeo),
+        };
+
+        if symbol.type_parameters.is_empty() {
+            return prefix;
+        }
+
+        let parameters: Vec<&str> = symbol
+            .type_parameters
+            .iter()
+            .map(|parameter| rodeo.resolve(parameter))
+            .collect();
+
+        format!("{prefix}<{}>", parameters.join(", "))
+    }
 }
 
 /// Build the merged symbol table from per-file extraction facts.
@@ -147,6 +182,7 @@ pub fn build_symbols(files: &[SourceFile], facts: &[FileFacts], rodeo: &Interner
             is_auto_property: false,
             has_body: false,
             arity: 0,
+            type_parameters: SmallVec::new(),
         });
         file_roots.push(root_id);
 
@@ -192,6 +228,7 @@ pub fn build_symbols(files: &[SourceFile], facts: &[FileFacts], rodeo: &Interner
                             is_auto_property: false,
                             has_body: decl.has_body,
                             arity: decl.arity,
+                            type_parameters: decl.type_parameters.clone(),
                         });
                         type_merge.insert((fqn, decl.arity), id);
                         types_by_fqn.entry(fqn).or_default().push(id);
@@ -253,6 +290,7 @@ pub fn build_symbols(files: &[SourceFile], facts: &[FileFacts], rodeo: &Interner
                             is_auto_property: decl.is_auto_property,
                             has_body: decl.has_body,
                             arity: decl.arity,
+                            type_parameters: SmallVec::new(),
                         });
                         member_merge.insert(key, id);
                         if decl.kind != SymbolKind::Member(MemberKind::Constructor)
