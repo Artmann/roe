@@ -28,9 +28,8 @@ pub fn apply_kill_list(
                 // buffers, native interop) hold their place even when C#
                 // never reads them: removing one shifts everything after it.
                 if kind == MemberKind::Field
-                    && !symbol
-                        .modifiers
-                        .intersects(Modifiers::CONST | Modifiers::STATIC)
+                    && !symbol.modifiers.contains(Modifiers::CONST)
+                    && !symbol.modifiers.contains(Modifiers::STATIC)
                     && let Some(parent) = symbol.parent
                 {
                     let is_struct = matches!(
