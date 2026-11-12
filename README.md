@@ -137,6 +137,8 @@ points for reachability):
   `[Obsolete]`-class metadata)
 - Reflection-scan contracts: implementations of a type used as a lone generic
   argument in a call (`GetExports<IImageProvider>()`, `AddHostedService<W>()`)
+- Hot reload handlers: `ClearCache` and `UpdateApplication` on a type named by
+  `[assembly: MetadataUpdateHandler(typeof(T))]`
 - Public API surface of NuGet-packable projects, of every non-test project
   when the workspace has no executable ("library mode"), and of any project
   named with `--library`/`libraryProjects` (a project consumed outside the

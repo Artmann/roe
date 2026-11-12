@@ -22,6 +22,7 @@ pub fn extract(file: FileId, source: &[u8], root: Node, rodeo: &Interner) -> Fil
             usings: Vec::new(),
             has_top_level_statements: false,
             has_errors: root.has_error(),
+            hot_reload_handlers: Vec::new(),
             is_generated: false,
             line_count: root.end_position().row as u32 + 1,
         },
@@ -338,14 +339,56 @@ impl<'a> Walker<'a> {
     }
 
     fn attribute_ref(&mut self, node: Node) {
+        let mut is_hot_reload_handler = false;
+
         if let Some(name) = node.child_by_field_name("name") {
             let path = self.name_path(name);
+
+            is_hot_reload_handler = path.last().is_some_and(|last| {
+                matches!(
+                    self.rodeo.resolve(last),
+                    "MetadataUpdateHandler" | "MetadataUpdateHandlerAttribute"
+                )
+            });
+
             self.emit(RawRefKind::Attribute, path);
         }
+
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "attribute_argument_list" {
-                self.walk_children(child, false);
+            if child.kind() != "attribute_argument_list" {
+                continue;
+            }
+
+            if is_hot_reload_handler {
+                self.collect_hot_reload_handlers(child);
+            }
+
+            self.walk_children(child, false);
+        }
+    }
+
+    /// Record the `T` of every `typeof(T)` in a `MetadataUpdateHandler`
+    /// attribute's arguments.
+    fn collect_hot_reload_handlers(&mut self, arguments: Node) {
+        let mut cursor = arguments.walk();
+        for argument in arguments.children(&mut cursor) {
+            if argument.kind() != "attribute_argument" {
+                continue;
+            }
+
+            let mut inner = argument.walk();
+            for expression in argument.children(&mut inner) {
+                if expression.kind() != "typeof_expression" {
+                    continue;
+                }
+
+                if let Some(target) = expression.child_by_field_name("type") {
+                    let path = self.name_path(target);
+                    if !path.is_empty() {
+                        self.facts.hot_reload_handlers.push(path);
+                    }
+                }
             }
         }
     }
