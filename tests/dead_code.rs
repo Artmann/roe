@@ -317,9 +317,10 @@ fn foreach_uses_a_pattern_based_enumerator() {
 fn the_element_field_of_an_inline_array_is_never_flagged() {
     // `[InlineArray(n)]` requires exactly one instance field, and it is the
     // element storage behind every indexer and span access. Nothing names it.
-    // An unused constant in the same struct is not storage and stays flagged.
+    // An unused constant or static field in the same struct is not storage
+    // and stays flagged.
     assert_findings(
         findings("inline_array", false),
-        vec![member("App.Slots.Unused")],
+        vec![member("App.Slots.Spare"), member("App.Slots.Unused")],
     );
 }
