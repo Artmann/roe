@@ -331,3 +331,16 @@ fn a_const_in_a_field_initializer_call_next_to_a_primary_constructor_parameter_i
     // a primary-constructor parameter, must still count as a use of `A`.
     assert_findings(findings("field_initializer_const", false), vec![]);
 }
+
+#[test]
+fn fields_of_layout_sensitive_structs_are_never_flagged() {
+    // Removing a field from a struct whose layout matters changes its size or
+    // the offsets after it, which corrupts what the GPU or native code reads.
+    // Evidence: [StructLayout], [FieldOffset], sizeof, Unsafe.SizeOf<T>, a T*
+    // pointer, or a field named as padding. A struct with none of that still
+    // gets its unused fields reported.
+    assert_findings(
+        findings("layout_structs", false),
+        vec![member("App.Plain._unused")],
+    );
+}
