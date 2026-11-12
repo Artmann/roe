@@ -153,7 +153,8 @@ cheap, a wrong one is a bug. That means constructors, operators, indexers,
 and finalizers (invoked structurally); `override` members and explicit
 interface implementations (invoked via dispatch); members satisfying an
 in-source interface; visible members of types implementing external
-`I`-prefixed interfaces; and extension methods. Public auto-properties and
+`I`-prefixed interfaces; the element field of an `[InlineArray]` struct; and
+extension methods. Public auto-properties and
 enum members are treated as serializer fodder and skipped by default — opt
 in with `--aggressive`.
 

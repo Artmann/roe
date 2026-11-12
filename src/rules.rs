@@ -41,6 +41,19 @@ pub fn apply_kill_list(
                     flags |= SymbolFlags::LIVE_WITH_TYPE;
                 }
 
+                // The single instance field of an `[InlineArray(n)]` struct is
+                // the element storage behind every indexer and span access,
+                // which never name it.
+                if kind == MemberKind::Field
+                    && !symbol
+                        .modifiers
+                        .intersects(Modifiers::CONST | Modifiers::STATIC)
+                    && let Some(parent) = symbol.parent
+                    && is_inline_array(&resolution.symbols[parent.index()].attributes, rodeo)
+                {
+                    flags |= SymbolFlags::LIVE_WITH_TYPE;
+                }
+
                 // Called via base-class or interface dispatch.
                 if symbol.modifiers.contains(Modifiers::OVERRIDE)
                     || symbol.is_explicit_interface_impl
@@ -124,6 +137,18 @@ pub fn apply_kill_list(
 
         resolution.symbols[index].flags = flags;
     }
+}
+
+/// Whether a type carries `[InlineArray(n)]`, written with or without the
+/// `Attribute` suffix. Attribute names are stored as their last segment, so a
+/// qualified `System.Runtime.CompilerServices.InlineArray` matches too.
+fn is_inline_array(attributes: &[lasso::Spur], rodeo: &Interner) -> bool {
+    attributes.iter().any(|attribute| {
+        matches!(
+            rodeo.resolve(attribute),
+            "InlineArray" | "InlineArrayAttribute"
+        )
+    })
 }
 
 struct SatisfactionSet {

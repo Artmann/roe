@@ -12,10 +12,12 @@ internal struct Parameters
     private Vector4 _element;
 }
 
-// The same, with the fully qualified attribute name.
+// The same, with the fully qualified attribute name. Only the element field is
+// storage: an unused constant next to it is still dead.
 [System.Runtime.CompilerServices.InlineArrayAttribute(4)]
 internal struct Slots
 {
+    private const int Unused = 3;
     private int _slot;
 }
 
