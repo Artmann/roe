@@ -128,7 +128,12 @@ impl<'a> Walker<'a> {
                 let is_await = node.children(&mut cursor).any(|c| c.kind() == "await");
 
                 let names: &[&str] = if is_await {
-                    &["GetAsyncEnumerator", "MoveNextAsync", "Current", "DisposeAsync"]
+                    &[
+                        "GetAsyncEnumerator",
+                        "MoveNextAsync",
+                        "Current",
+                        "DisposeAsync",
+                    ]
                 } else {
                     &["GetEnumerator", "MoveNext", "Current", "Dispose"]
                 };
