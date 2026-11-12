@@ -345,3 +345,65 @@ fn intern_type_fqn(
     fqn.push_str(rodeo.resolve(&decl.name));
     rodeo.get_or_intern(&fqn)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::extract::{extract_source, new_interner};
+
+    fn generic_name_of(source: &str, fqn: &str) -> String {
+        let rodeo = new_interner();
+        let files = vec![SourceFile {
+            id: FileId(0),
+            path: PathBuf::from("File0.cs"),
+            project: None,
+            is_generated: false,
+        }];
+        let facts = vec![extract_source(source, &rodeo)];
+        let resolution = build_symbols(&files, &facts, &rodeo);
+        let spur = rodeo
+            .get(fqn)
+            .unwrap_or_else(|| panic!("{fqn} was never interned"));
+        let ids = resolution
+            .types_by_fqn
+            .get(&spur)
+            .unwrap_or_else(|| panic!("no type declared as {fqn}"));
+
+        assert_eq!(ids.len(), 1, "{fqn} must name exactly one type");
+
+        resolution.generic_name(ids[0], &rodeo)
+    }
+
+    #[test]
+    fn a_generic_name_lists_the_type_parameters() {
+        let source = "namespace App; class Pair<TFirst, TSecond> { }";
+
+        assert_eq!(
+            generic_name_of(source, "App.Pair"),
+            "App.Pair<TFirst, TSecond>"
+        );
+    }
+
+    #[test]
+    fn a_nested_type_carries_its_outer_types_parameters() {
+        let source = "namespace App; class Pool<T> { class Slot { } class Cell<TValue> { } }";
+
+        assert_eq!(generic_name_of(source, "App.Pool.Slot"), "App.Pool<T>.Slot");
+        assert_eq!(
+            generic_name_of(source, "App.Pool.Cell"),
+            "App.Pool<T>.Cell<TValue>"
+        );
+    }
+
+    #[test]
+    fn a_non_generic_name_is_the_display_name() {
+        let source = "namespace App; class Outer { class Inner { } }";
+
+        assert_eq!(
+            generic_name_of(source, "App.Outer.Inner"),
+            "App.Outer.Inner"
+        );
+    }
+}
