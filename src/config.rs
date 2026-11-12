@@ -797,9 +797,8 @@ mod tests {
 
     #[test]
     fn parses_a_dupes_mode_from_yaml() {
-        let config: RoeConfig =
-            serde_yaml_ng::from_str("dupes:\n  mode: semantic\n  minTokens: 100\n")
-                .expect("valid yaml");
+        let config =
+            parse_yaml("dupes:\n  mode: semantic\n  minTokens: 100\n").expect("valid yaml");
         let dupes = config.dupes.expect("a dupes block");
 
         assert_eq!(dupes.mode, Some(DupeMode::Semantic));
@@ -841,7 +840,7 @@ mod tests {
     #[test]
     fn parses_yaml_scoped_ignores() {
         // The exact shape issue #32 asked for.
-        let config: RoeConfig = serde_yaml_ng::from_str(concat!(
+        let config = parse_yaml(concat!(
             "ignore:\n",
             "  - \"Generated/**\"\n",
             "dupes:\n",
@@ -909,11 +908,59 @@ mod tests {
 
     #[test]
     fn parses_yaml() {
-        let config: RoeConfig =
-            serde_yaml_ng::from_str("aggressive: true\nignore:\n  - Generated/\n")
-                .expect("valid yaml");
+        let config = parse_yaml("aggressive: true\nignore:\n  - Generated/\n").expect("valid yaml");
         assert_eq!(config.aggressive, Some(true));
         assert_eq!(config.ignore, Some(vec!["Generated/".to_string()]));
+    }
+
+    #[test]
+    fn yaml_rejects_unknown_fields() {
+        // Same near-miss as `rejects_unknown_fields`, through the YAML parser.
+        let error = parse_yaml("agressive: true\n").expect_err("typo should fail loudly");
+        let message = error.to_string();
+
+        assert!(message.contains("unknown field"), "got {message}");
+        assert!(message.contains("agressive"), "got {message}");
+    }
+
+    #[test]
+    fn yaml_syntax_errors_name_the_line() {
+        // An unclosed flow sequence on line 2. The message has to point the
+        // user at the line to fix.
+        let error = parse_yaml("aggressive: true\nignore: [Generated/\n")
+            .expect_err("malformed yaml should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("line 2"), "got {message}");
+    }
+
+    #[test]
+    fn yaml_rejects_a_wrong_value_type() {
+        let error = parse_yaml("aggressive: maybe\n").expect_err("not a boolean");
+        let message = error.to_string();
+
+        assert!(message.contains("aggressive"), "got {message}");
+    }
+
+    #[test]
+    fn an_empty_yaml_file_is_an_empty_config() {
+        let config = parse_yaml("").expect("an empty file is a valid config");
+
+        assert_eq!(config.aggressive, None);
+        assert_eq!(config.ignore, None);
+    }
+
+    #[test]
+    fn a_comment_only_yaml_file_is_an_empty_config() {
+        let config =
+            parse_yaml("# Nothing configured yet.\n").expect("a comment-only file is valid");
+
+        assert_eq!(config.aggressive, None);
+        assert_eq!(config.ignore, None);
+    }
+
+    fn parse_yaml(content: &str) -> anyhow::Result<RoeConfig> {
+        parse(Path::new("roe.yaml"), content)
     }
 
     #[test]
@@ -955,8 +1002,7 @@ mod tests {
             serde_json::from_str(r#"{"entryPoints": ["Plugins/"]}"#).expect("valid json");
         assert_eq!(config.entry_points, Some(vec!["Plugins/".to_string()]));
 
-        let config: RoeConfig =
-            serde_yaml_ng::from_str("entryPoints:\n  - \"Jobs/**/*.cs\"\n").expect("valid yaml");
+        let config = parse_yaml("entryPoints:\n  - \"Jobs/**/*.cs\"\n").expect("valid yaml");
         assert_eq!(config.entry_points, Some(vec!["Jobs/**/*.cs".to_string()]));
     }
 
