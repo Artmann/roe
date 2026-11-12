@@ -171,7 +171,7 @@ fn parse(path: &Path, content: &str) -> anyhow::Result<RoeConfig> {
         .as_deref()
     {
         Some("json") => Ok(serde_json::from_str(content)?),
-        Some("yaml") | Some("yml") => Ok(serde_yaml_ng::from_str(content)?),
+        Some("yaml") | Some("yml") => Ok(serde_saphyr::from_str(content)?),
         other => bail!("unsupported config extension: {other:?} (expected .json, .yaml, or .yml)"),
     }
 }
