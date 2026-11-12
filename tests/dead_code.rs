@@ -337,10 +337,16 @@ fn fields_of_layout_sensitive_structs_are_never_flagged() {
     // Removing a field from a struct whose layout matters changes its size or
     // the offsets after it, which corrupts what the GPU or native code reads.
     // Evidence: [StructLayout], [FieldOffset], sizeof, Unsafe.SizeOf<T>, a T*
-    // pointer, or a field named as padding. A struct with none of that still
-    // gets its unused fields reported.
+    // pointer, or a field named as padding. A struct with none of that, or
+    // with an unrelated attribute, still gets its unused fields reported, and
+    // so do constants and static fields, which take no space in the layout.
     assert_findings(
         findings("layout_structs", false),
-        vec![member("App.Plain._unused")],
+        vec![
+            member("App.GpuDecal.Spare"),
+            member("App.GpuDecal.Unused"),
+            member("App.Plain._unused"),
+            member("App.Tagged._unused"),
+        ],
     );
 }

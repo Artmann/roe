@@ -1,13 +1,18 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using static System.Runtime.CompilerServices.Unsafe;
 
 namespace App;
 
 // Uploaded to a GPU buffer and measured with sizeof. Removing a field changes
-// the size the GPU expects.
+// the size the GPU expects. Constants and static fields take no space in it,
+// so unused ones are still dead.
 internal struct GpuDecal
 {
+    private const uint Unused = 0;
+    private static uint Spare;
+
     public Matrix4x4 Box;
     public uint Material;
     private uint _pad0;
@@ -15,7 +20,8 @@ internal struct GpuDecal
     private uint _pad2;
 }
 
-// Passed to a native library that reads every field at a fixed offset.
+// Passed to a native library that reads every field at a fixed offset. Only
+// [StructLayout] says so: it is passed by reference, not through a pointer.
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeDescription
 {
@@ -47,6 +53,13 @@ internal struct Vertex
     public Vector3 Normal;
 }
 
+// Measured with SizeOf<T>() through `using static`.
+internal struct Instance
+{
+    public Matrix4x4 Transform;
+    public uint Color;
+}
+
 // No layout evidence, but the field is named as padding.
 internal struct Uniforms
 {
@@ -62,10 +75,18 @@ internal struct Plain
     private int _unused;
 }
 
+// An attribute that says nothing about layout is not evidence either.
+[Serializable]
+internal struct Tagged
+{
+    public int Used;
+    private int _unused;
+}
+
 internal static unsafe class Program
 {
     [DllImport("native")]
-    private static extern void Dispatch(NativeDescription* description);
+    private static extern void Dispatch(ref NativeDescription description);
 
     [DllImport("native")]
     private static extern void Read(Header* header);
@@ -77,7 +98,7 @@ internal static unsafe class Program
         Console.WriteLine(decals.Length * sizeof(GpuDecal));
 
         var description = new NativeDescription { Color = 1 };
-        Dispatch(&description);
+        Dispatch(ref description);
 
         var overlay = new Overlay();
         Console.WriteLine(overlay.Whole);
@@ -86,11 +107,15 @@ internal static unsafe class Program
         Read(&header);
 
         Console.WriteLine(Unsafe.SizeOf<Vertex>());
+        Console.WriteLine(SizeOf<Instance>());
 
         var uniforms = new Uniforms { Tint = Vector4.One };
         Console.WriteLine(uniforms.Tint);
 
         var plain = new Plain { Used = 1 };
         Console.WriteLine(plain.Used);
+
+        var tagged = new Tagged { Used = 1 };
+        Console.WriteLine(tagged.Used);
     }
 }
