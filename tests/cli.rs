@@ -749,7 +749,12 @@ fn health_reports_a_cycle_on_its_own() {
         stdout.starts_with("circular dependencies"),
         "with nothing printed above it, the section leads the report, got:\n{stdout}"
     );
-    assert!(stdout.contains("found 1 issue across 0 locations in 0 files"));
+    // Alpha and Beta are two declarations in one file, so the cycle's types
+    // count towards the locations and files it is spread across.
+    assert!(
+        stdout.contains("found 1 issue across 2 locations in 1 file "),
+        "the cycle's types count as locations, got:\n{stdout}"
+    );
 }
 
 #[test]
@@ -784,9 +789,11 @@ fn health_separates_files_with_a_blank_line_and_counts_every_kind() {
         stdout.contains("\n\nHealthMetrics/Cycle.cs"),
         "a blank line separates the next file, got:\n{stdout}"
     );
-    // 1 complex method + 1 long method + 2 large files + 1 cycle.
+    // 1 complex method + 1 long method + 2 large files + 1 cycle. The
+    // locations are Branchy, the two large files, and the cycle's Alpha and
+    // Beta.
     assert!(
-        stdout.contains("found 5 issues across 3 locations in 2 files"),
+        stdout.contains("found 5 issues across 5 locations in 2 files"),
         "every kind counts towards the headline, got:\n{stdout}"
     );
 }
