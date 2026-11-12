@@ -357,3 +357,14 @@ fn null_conditional_assignment_does_not_invent_fields() {
     // lines after it into private fields named `` and `true`.
     assert_findings(findings("null_conditional_assignment", false), vec![]);
 }
+
+#[test]
+fn a_name_never_resolves_to_a_type_in_a_project_that_references_it_back() {
+    // App references Lib, so nothing in Lib can use a type declared in App.
+    // Lib's `Tiles.Bricks(...)` and `StepKind.Glass` share names with App's
+    // `Bricks` and `Glass`, but must not keep them alive.
+    assert_findings(
+        findings("project_scoped_names", false),
+        vec![ty("Bricks"), ty("Glass")],
+    );
+}
