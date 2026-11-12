@@ -302,6 +302,8 @@ pub fn build_graph(
     let resolver = Resolver {
         resolution: &*resolution,
         rodeo,
+        workspace,
+        dependencies: project_dependencies(workspace),
     };
 
     // Resolve each file independently, then merge. Files write only into their
@@ -450,9 +452,85 @@ fn base_closure_hits(
 struct Resolver<'a> {
     resolution: &'a Resolution,
     rodeo: &'a Interner,
+    workspace: &'a Workspace,
+    /// Per project, every project it references, directly or transitively.
+    dependencies: Vec<FixedBitSet>,
+}
+
+/// For every project, the projects it references, directly or through other
+/// projects. Indexed like `Workspace::projects`.
+fn project_dependencies(workspace: &Workspace) -> Vec<FixedBitSet> {
+    let count = workspace.projects.len();
+
+    workspace
+        .projects
+        .iter()
+        .map(|project| {
+            let mut seen = FixedBitSet::with_capacity(count);
+            let mut stack: Vec<ProjectId> = project.project_refs.clone();
+
+            while let Some(next) = stack.pop() {
+                if seen.contains(next.index()) {
+                    continue;
+                }
+
+                seen.insert(next.index());
+                stack.extend(
+                    workspace.projects[next.index()]
+                        .project_refs
+                        .iter()
+                        .copied(),
+                );
+            }
+
+            seen
+        })
+        .collect()
 }
 
 impl Resolver<'_> {
+    fn project_of(&self, id: SymbolId) -> Option<ProjectId> {
+        let file = self.resolution.symbols[id.index()].file;
+
+        self.workspace.files[file.index()].project
+    }
+
+    /// Whether code in `from` could possibly name `candidate`.
+    ///
+    /// MSBuild doesn't allow project cycles, so when the candidate's project
+    /// references `from` (directly or transitively), `from` can't reference
+    /// it back. That is the only case ruled out. A project that isn't in the
+    /// reference graph at all may still be reached through something roe
+    /// doesn't read (`Directory.Build.props`, a DLL reference), so it stays a
+    /// candidate.
+    fn can_reference(&self, from: Option<ProjectId>, candidate: SymbolId) -> bool {
+        let (Some(from), Some(to)) = (from, self.project_of(candidate)) else {
+            return true;
+        };
+
+        from == to || !self.dependencies[to.index()].contains(from.index())
+    }
+
+    /// Drops the candidates appended since `start` that `from` can't reference,
+    /// and reports whether any were kept.
+    fn keep_referenceable(
+        &self,
+        from: Option<ProjectId>,
+        edges: &mut Vec<SymbolId>,
+        start: usize,
+    ) -> bool {
+        let mut index = start;
+        while index < edges.len() {
+            if self.can_reference(from, edges[index]) {
+                index += 1;
+            } else {
+                edges.swap_remove(index);
+            }
+        }
+
+        edges.len() > start
+    }
+
     /// Scoped type resolution with the safety valves:
     /// - candidates from enclosing types → namespace ancestors → usings →
     ///   aliases, marking ALL hits (union, not first-match);
@@ -472,7 +550,8 @@ impl Resolver<'_> {
         if path.is_empty() {
             return;
         }
-        let mut found = false;
+
+        let from = self.project_of(origin);
 
         // Alias expansion: `using F = App.Widgets.Factory;` then `F.Create()`.
         let expanded: Option<Vec<Spur>> = context.aliases.get(&path[0]).map(|target| {
@@ -481,6 +560,79 @@ impl Resolver<'_> {
             full
         });
         let path: &[Spur] = expanded.as_deref().unwrap_or(path);
+
+        let found = self.lookup_scoped(path, origin, from, context, scratch, edges);
+
+        if found && !context.has_errors {
+            return;
+        }
+
+        // `StepKind.Glass`: the whole path isn't a type, but `StepKind` is.
+        // Whatever follows a resolved qualifier is one of its members, not a
+        // same-named type somewhere else.
+        if !found && !context.has_errors && path.len() > 1 {
+            let mut qualifier = 0;
+            let mut qualifier_edges = Vec::new();
+
+            for length in 1..path.len() {
+                let mut candidates = Vec::new();
+                if !self.lookup_scoped(
+                    &path[..length],
+                    origin,
+                    from,
+                    context,
+                    scratch,
+                    &mut candidates,
+                ) {
+                    break;
+                }
+
+                qualifier = length;
+                qualifier_edges.extend(candidates);
+            }
+
+            if qualifier > 0 {
+                edges.extend(qualifier_edges);
+                member_names.extend_from_slice(&path[qualifier..]);
+
+                return;
+            }
+        }
+
+        // Valve: cannot distinguish "external type" from "incomplete
+        // context", so fall back to simple-name matching. Multi-segment
+        // paths degrade per segment, as both types and members
+        // (covers Enum.Member, Constants.Value, Outer.Nested).
+        let fallback_start = edges.len();
+
+        for &segment in path {
+            if let Some(ids) = self.resolution.types_by_simple.get(&segment) {
+                edges.extend_from_slice(ids);
+            }
+            if path.len() > 1 {
+                member_names.push(segment);
+            }
+        }
+
+        self.keep_referenceable(from, edges, fallback_start);
+    }
+
+    /// Looks `path` up the way the compiler would from `origin`: enclosing
+    /// types, then namespace ancestors (including the bare path), then usings.
+    /// Appends every match `from` can reference and reports whether there was
+    /// one. A match in a project that references `from` back is a same-named
+    /// type the code can't see, so it doesn't count.
+    fn lookup_scoped(
+        &self,
+        path: &[Spur],
+        origin: SymbolId,
+        from: Option<ProjectId>,
+        context: &FileContext,
+        scratch: &mut Scratch,
+        edges: &mut Vec<SymbolId>,
+    ) -> bool {
+        let start = edges.len();
+        let mut found = false;
 
         // Destructured so the prefix source and the candidate buffer can be
         // borrowed at the same time.
@@ -528,20 +680,7 @@ impl Resolver<'_> {
             found |= self.lookup_joined(using, path_text, fqn, edges);
         }
 
-        if !found || context.has_errors {
-            // Valve: cannot distinguish "external type" from "incomplete
-            // context", so fall back to simple-name matching. Multi-segment
-            // paths degrade per segment, as both types and members
-            // (covers Enum.Member, Constants.Value, Outer.Nested).
-            for &segment in path {
-                if let Some(ids) = self.resolution.types_by_simple.get(&segment) {
-                    edges.extend_from_slice(ids);
-                }
-                if path.len() > 1 {
-                    member_names.push(segment);
-                }
-            }
-        }
+        found && self.keep_referenceable(from, edges, start)
     }
 
     /// Joins an already-rendered prefix and path into `buffer` and looks the
@@ -926,6 +1065,26 @@ mod tests {
         assert!(
             !resolved.references("Unrelated.Controller", "App.B.AuthorizeAttribute"),
             "the AuthorizeAttribute that was never imported must not be referenced"
+        );
+    }
+
+    /// `StepKind.Glass` names an enum member. The qualifier resolves, so
+    /// `Glass` is one of its members and not the unrelated `Glass` type.
+    #[test]
+    fn a_member_after_a_resolved_qualifier_is_not_a_same_named_type() {
+        let resolved = Resolved::build(&[
+            "namespace Lib; public enum StepKind { Opaque, Glass }",
+            "namespace App; public class Glass {}",
+            "using Lib;\nnamespace App.Consumers;\npublic class Consumer { public object Run() => StepKind.Glass; }",
+        ]);
+
+        assert!(
+            resolved.references("App.Consumers.Consumer", "Lib.StepKind"),
+            "the qualifier must be referenced"
+        );
+        assert!(
+            !resolved.references("App.Consumers.Consumer", "App.Glass"),
+            "the enum member must not reach the Glass type"
         );
     }
 }
