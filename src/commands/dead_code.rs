@@ -57,7 +57,7 @@ pub(crate) fn analyze_extracted(
 
     let mut resolution = resolve::build_symbols(&workspace.files, facts, rodeo);
 
-    rules::apply_kill_list(&mut resolution, &workspace, rodeo, aggressive);
+    rules::apply_kill_list(&mut resolution, &workspace, facts, rodeo, aggressive);
 
     let mut notes = entry_points::mark_roots(
         &mut resolution,
