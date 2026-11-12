@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.1](https://github.com/Artmann/roe/compare/roe-v1.5.0...roe-v1.5.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **dead-code:** Never declare a field named by parser error recovery. ([04d49d1](https://github.com/Artmann/roe/commit/04d49d1333b276b7166e2fa828c1294d173a4145))
+* **dead-code:** Never flag fields of layout-sensitive structs. ([c5cc1ee](https://github.com/Artmann/roe/commit/c5cc1ee162a7be6df72a8da430f4f8742343226a))
+* **dead-code:** Never flag the element field of an inline array. ([a068482](https://github.com/Artmann/roe/commit/a06848218b6791bb5d984b6b9d632db20266e1f3))
+* **dead-code:** Read a product in an argument as two uses. ([c1f411e](https://github.com/Artmann/roe/commit/c1f411e1c53219a51b76b9db43e98a5916770bb1))
+* **dead-code:** Stop names resolving to types they can't refer to. ([013e905](https://github.com/Artmann/roe/commit/013e905ad449be68bc7a42f43ddf12043abcd29c))
+* **dead-code:** Treat foreach as a use of the enumerator pattern. ([28ba814](https://github.com/Artmann/roe/commit/28ba8148978284690ae2eae6608ae7dd81146b94))
+* **dead-code:** Treat hot reload handler methods as entry points. ([2ba1e47](https://github.com/Artmann/roe/commit/2ba1e47168d7c9a3add7cce1f47fc6653c3e9b35))
+* **deps:** Replace serde_yaml_ng with serde-saphyr to drop the unmaintained unsafe-libyaml. ([d56727a](https://github.com/Artmann/roe/commit/d56727a2571dff250ad8ebe8916897b604e0dea8))
+* **health:** Count cycle types towards the footer's locations and files. ([d079eb1](https://github.com/Artmann/roe/commit/d079eb10ed7e856917a8e115f8f720dd5d8bb62e))
+* **health:** Fold nested types into their outer type before finding cycles. ([aeb39dc](https://github.com/Artmann/roe/commit/aeb39dc0694b6540bc4b691f37a70e60ff8b12ef))
+* **health:** Show type parameters on generic types in cycles. ([ba8f91d](https://github.com/Artmann/roe/commit/ba8f91d2b6f17ea816dab580365be0f9678faabf))
+
 ## [1.5.0](https://github.com/Artmann/roe/compare/roe-v1.4.0...roe-v1.5.0) (2026-09-16)
 
 
