@@ -84,13 +84,13 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-latest
             binary: roe
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
             binary: roe
           - target: x86_64-apple-darwin
-            runner: macos-14
+            runner: macos-latest
             binary: roe
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
