@@ -330,6 +330,10 @@ circular dependencies
     + 2 more types in this cycle: App.Orders.Line, App.Orders.Tax
 ```
 
+A nested type counts as part of its outermost containing type. A type and its
+own nested types referring to each other is not a cycle, and a cycle that runs
+through a nested type is reported under the outer type.
+
 Where a file declares two overloads that both trip a check, the entries carry
 a Roslyn-style arity suffix (`TryBeginActivation/0`, `TryBeginActivation/1`)
 so they can be told apart. The suffix appears only where there's an actual

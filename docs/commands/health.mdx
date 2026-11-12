@@ -254,6 +254,10 @@ references that don't exist:
     + 2 more types in this cycle: App.Orders.Line, App.Orders.Tax
 ```
 
+A nested type counts as part of its outermost containing type. A type and its
+own nested types referring to each other is not a cycle, and a cycle that runs
+through a nested type is reported under the outer type.
+
 ## Hotspots
 
 `--hotspots` reads git history and ranks files by complexity multiplied by
