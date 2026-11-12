@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use colored::{ColoredString, Colorize};
@@ -114,6 +115,8 @@ pub fn print(result: &HealthResult, workspace: &Workspace, sort: HealthSort, lim
 
     print_hotspots(result, workspace);
 
+    let (locations, located_files) = spread(&files, &result.cycles);
+
     println!();
     let s = &result.summary;
     let total_findings = s.high_complexity
@@ -127,8 +130,8 @@ pub fn print(result: &HealthResult, workspace: &Workspace, sort: HealthSort, lim
         "{} {} across {} in {} — {} project(s), {} file(s), {} symbol(s) scanned in {} ms",
         "found".bold(),
         pluralize(total_findings, "issue").red().bold(),
-        pluralize(total_groups, "location"),
-        pluralize(files.len(), "file"),
+        pluralize(locations, "location"),
+        pluralize(located_files, "file"),
         s.projects,
         s.files_scanned,
         s.symbols,
@@ -249,6 +252,31 @@ fn group(findings: &[HealthFinding]) -> Vec<FileGroup<'_>> {
     }
 
     files
+}
+
+/// How many distinct declarations and files the issues are spread across.
+///
+/// A cycle is one issue, but each type in it is a place to look, so its types
+/// count alongside the declarations the other checks flagged. A type that is
+/// both in a cycle and flagged by another check is still one location.
+fn spread(files: &[FileGroup<'_>], cycles: &[CircularDependency]) -> (usize, usize) {
+    let mut locations: BTreeSet<(&Path, u32, u32)> = BTreeSet::new();
+
+    for file in files {
+        for group in &file.groups {
+            locations.insert((file.file, group.line, group.column));
+        }
+    }
+
+    for cycle in cycles {
+        for member in cycle.path.iter().chain(&cycle.others) {
+            locations.insert((member.file.as_path(), member.line, member.column));
+        }
+    }
+
+    let located_files: BTreeSet<&Path> = locations.iter().map(|(file, _, _)| *file).collect();
+
+    (locations.len(), located_files.len())
 }
 
 /// Worst first, at both levels, so the thing most worth fixing leads the
