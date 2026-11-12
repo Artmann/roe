@@ -519,16 +519,13 @@ impl Resolver<'_> {
         edges: &mut Vec<SymbolId>,
         start: usize,
     ) -> bool {
-        let mut index = start;
-        while index < edges.len() {
-            if self.can_reference(from, edges[index]) {
-                index += 1;
-            } else {
-                edges.swap_remove(index);
-            }
-        }
+        let mut appended = edges.split_off(start);
+        appended.retain(|candidate| self.can_reference(from, *candidate));
 
-        edges.len() > start
+        let kept = !appended.is_empty();
+        edges.append(&mut appended);
+
+        kept
     }
 
     /// Scoped type resolution with the safety valves:
@@ -569,8 +566,9 @@ impl Resolver<'_> {
 
         // `StepKind.Glass`: the whole path isn't a type, but `StepKind` is.
         // Whatever follows a resolved qualifier is one of its members, not a
-        // same-named type somewhere else.
-        if !found && !context.has_errors && path.len() > 1 {
+        // same-named type somewhere else. A single name has no qualifier, so
+        // the loop below finds nothing for it.
+        if !found && !context.has_errors {
             let mut qualifier = 0;
             let mut qualifier_edges = Vec::new();
 
@@ -818,7 +816,7 @@ mod tests {
 
     use super::*;
     use crate::extract::extract_source;
-    use crate::model::{FileId, SourceFile};
+    use crate::model::{DiscoveredProject, FileId, ProjectKind, SourceFile};
     use crate::resolve;
 
     /// Builds a workspace from in-memory sources and resolves it, so a test can
@@ -839,19 +837,48 @@ mod tests {
 
     impl Resolved {
         fn build(sources: &[&str]) -> Self {
+            let sources: Vec<(Option<u32>, &str)> =
+                sources.iter().map(|source| (None, *source)).collect();
+
+            Self::build_in_projects(&[], &sources)
+        }
+
+        /// Like [`Self::build`], with projects. `project_refs[n]` lists the
+        /// projects project `n` references, and each source names the project
+        /// its file belongs to.
+        fn build_in_projects(project_refs: &[&[u32]], sources: &[(Option<u32>, &str)]) -> Self {
             let rodeo = crate::extract::new_interner();
-            let files: Vec<SourceFile> = (0..sources.len())
-                .map(|index| SourceFile {
+            let projects: Vec<DiscoveredProject> = project_refs
+                .iter()
+                .enumerate()
+                .map(|(index, references)| DiscoveredProject {
+                    id: ProjectId(index as u32),
+                    name: format!("Project{index}"),
+                    csproj_path: None,
+                    root_dir: PathBuf::from(format!("Project{index}")),
+                    kind: ProjectKind::Library,
+                    project_refs: references.iter().map(|id| ProjectId(*id)).collect(),
+                    package_refs: Vec::new(),
+                    test_framework: None,
+                    implicit_usings: false,
+                    extra_usings: Vec::new(),
+                    is_packable: false,
+                })
+                .collect();
+            let files: Vec<SourceFile> = sources
+                .iter()
+                .enumerate()
+                .map(|(index, (project, _))| SourceFile {
                     id: FileId(index as u32),
                     path: PathBuf::from(format!("File{index}.cs")),
-                    project: None,
+                    project: project.map(ProjectId),
                     is_generated: false,
                 })
                 .collect();
             let facts: Vec<FileFacts> = sources
                 .iter()
                 .enumerate()
-                .map(|(index, source)| {
+                .map(|(index, (_, source))| {
                     let mut facts = extract_source(source, &rodeo);
                     facts.file = FileId(index as u32);
                     facts
@@ -859,7 +886,7 @@ mod tests {
                 .collect();
             let workspace = Workspace {
                 root: PathBuf::from("."),
-                projects: Vec::new(),
+                projects,
                 files,
                 warnings: Vec::new(),
                 missing_obj: false,
@@ -1085,6 +1112,91 @@ mod tests {
         assert!(
             !resolved.references("App.Consumers.Consumer", "App.Glass"),
             "the enum member must not reach the Glass type"
+        );
+    }
+
+    /// When no part of a qualified name resolves, it may still be a type the
+    /// file's context doesn't show, so every type named like its last part
+    /// stays reachable.
+    #[test]
+    fn an_unresolved_qualified_name_falls_back_to_simple_names() {
+        let resolved = Resolved::build(&[
+            "namespace App.Other; public class Widget {}",
+            "namespace App.Consumers;\npublic class Consumer { public External.Widget Field; }",
+        ]);
+
+        assert!(resolved.references("App.Consumers.Consumer", "App.Other.Widget"));
+    }
+
+    /// A file with parse errors may have lost the context a qualifier needs,
+    /// so it keeps the simple-name fallback even when the qualifier resolves.
+    #[test]
+    fn a_file_with_parse_errors_keeps_the_fallback_after_a_resolved_qualifier() {
+        let resolved = Resolved::build(&[
+            "namespace Lib; public enum StepKind { Opaque, Glass }",
+            "namespace App; public class Glass {}",
+            "using Lib;\nnamespace App.Consumers;\npublic class Consumer { public object Run() => StepKind.Glass; void Broken() { int = ; } }",
+        ]);
+
+        assert!(resolved.references("App.Consumers.Consumer", "Lib.StepKind"));
+        assert!(resolved.references("App.Consumers.Consumer", "App.Glass"));
+    }
+
+    /// The same when the whole name resolves: a file with parse errors also
+    /// reaches the types named like each part.
+    #[test]
+    fn a_file_with_parse_errors_keeps_the_fallback_after_a_resolved_name() {
+        let resolved = Resolved::build(&[
+            "namespace App; public class Outer { public class Inner {} }",
+            "namespace App.Other; public class Inner {}",
+            "namespace App;\npublic class Consumer { public Outer.Inner Field; void Broken() { int = ; } }",
+        ]);
+
+        assert!(resolved.references("App.Consumer", "App.Outer"));
+        assert!(resolved.references("App.Consumer", "App.Other.Inner"));
+    }
+
+    /// `using App;` in Lib finds App's `Widget`, but App references Lib, so Lib
+    /// can't see it. That counts as not found, and the simple-name fallback
+    /// still runs for the types Lib can see.
+    #[test]
+    fn a_match_only_in_a_project_that_references_back_is_not_found() {
+        let resolved = Resolved::build_in_projects(
+            &[&[1], &[]],
+            &[
+                (Some(0), "namespace App; public class Widget {}"),
+                (Some(1), "namespace Lib.Other; public class Widget {}"),
+                (
+                    Some(1),
+                    "using App;\nnamespace Lib;\npublic class Consumer { public Widget Field; }",
+                ),
+            ],
+        );
+
+        assert!(!resolved.references("Lib.Consumer", "App.Widget"));
+        assert!(resolved.references("Lib.Consumer", "Lib.Other.Widget"));
+    }
+
+    /// An unresolved single name is a type nobody declared. It says nothing
+    /// about members with that name.
+    #[test]
+    fn an_unresolved_single_name_is_not_a_member_use() {
+        let resolved =
+            Resolved::build(&["namespace App;\npublic class Consumer { public Gadget Field; }"]);
+        let consumer = resolved.symbol("App.Consumer");
+        let gadget = resolved.rodeo.get("Gadget");
+        let uses = |id: SymbolId| {
+            gadget.is_some_and(|name| resolved.graph.member_names_of(id).contains(&name))
+        };
+
+        assert!(
+            !uses(consumer)
+                && !resolved
+                    .resolution
+                    .symbols
+                    .iter()
+                    .filter(|symbol| symbol.parent == Some(consumer))
+                    .any(|symbol| uses(symbol.id))
         );
     }
 }
