@@ -1353,6 +1353,37 @@ unsafe class C
     }
 
     #[test]
+    fn error_recovery_never_declares_an_empty_or_keyword_name() {
+        // The grammar predates C# 14's `a?.B = x;`. Its error recovery turns
+        // the method into field declarations, one with a MISSING name and one
+        // named `true`. Neither is a name anyone wrote.
+        let (facts, rodeo) = extract(
+            r#"
+class H
+{
+    Node? _lit;
+
+    bool Light(Node? next)
+    {
+        _lit?.Lit = false;
+        next?.Lit = true;
+        _lit = next;
+        return true;
+    }
+}
+"#,
+        );
+
+        let names = decl_names(&facts, &rodeo);
+
+        assert!(facts.has_errors);
+        assert!(
+            !names.iter().any(|name| name.is_empty() || name == "true"),
+            "got {names:?}"
+        );
+    }
+
+    #[test]
     fn extracts_types_members_and_namespaces() {
         let (facts, rodeo) = extract(
             r#"
