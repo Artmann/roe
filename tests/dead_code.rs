@@ -312,3 +312,10 @@ fn foreach_uses_a_pattern_based_enumerator() {
     // `await foreach` the async forms, without naming any of them.
     assert_findings(findings("foreach_enumerator", false), vec![]);
 }
+
+#[test]
+fn the_element_field_of_an_inline_array_is_never_flagged() {
+    // `[InlineArray(n)]` requires exactly one instance field, and it is the
+    // element storage behind every indexer and span access. Nothing names it.
+    assert_findings(findings("inline_array", false), vec![]);
+}
