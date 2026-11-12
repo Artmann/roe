@@ -120,6 +120,27 @@ impl<'a> Walker<'a> {
                 self.walk_children(node, type_ctx);
             }
 
+            // `foreach` calls the enumerator pattern by name: GetEnumerator,
+            // MoveNext, Current and Dispose, or their async forms under
+            // `await foreach`. None of them appear at the call site.
+            "foreach_statement" => {
+                let mut cursor = node.walk();
+                let is_await = node.children(&mut cursor).any(|c| c.kind() == "await");
+
+                let names: &[&str] = if is_await {
+                    &["GetAsyncEnumerator", "MoveNextAsync", "Current", "DisposeAsync"]
+                } else {
+                    &["GetEnumerator", "MoveNext", "Current", "Dispose"]
+                };
+
+                for name in names {
+                    let path: NamePath = smallvec![self.intern(name)];
+                    self.emit(RawRefKind::Member, path);
+                }
+
+                self.walk_children(node, type_ctx);
+            }
+
             // ---- directives
             "using_directive" => self.using_directive(node),
             "extern_alias_directive" => {}
