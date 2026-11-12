@@ -1492,6 +1492,35 @@ class H
     }
 
     #[test]
+    fn error_recovery_never_uses_a_broken_name() {
+        // The name of a declarator built by error recovery is neither a
+        // declaration nor a use. Only the code around it is walked.
+        let (facts, rodeo) = extract(
+            r#"
+class H
+{
+    Node? _lit;
+
+    bool Light(Node? next)
+    {
+        _lit?.Lit = false;
+        next?.Lit = true;
+        _lit = next;
+        return true;
+    }
+}
+"#,
+        );
+        let names = ref_names(&facts, &rodeo);
+
+        assert!(facts.has_errors);
+        assert!(
+            !names.iter().any(|name| name.is_empty() || name == "true"),
+            "got {names:?}"
+        );
+    }
+
+    #[test]
     fn a_verbatim_keyword_field_is_still_declared() {
         let (facts, rodeo) = extract("class C { int @class; }");
 
