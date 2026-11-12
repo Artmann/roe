@@ -205,7 +205,8 @@ fn layout_sensitive_types(
     for symbol in &resolution.symbols {
         match symbol.kind {
             SymbolKind::Type(kind) => {
-                let is_measured_struct = kind == TypeKind::Struct && measured.contains(&symbol.name);
+                let is_measured_struct =
+                    kind == TypeKind::Struct && measured.contains(&symbol.name);
 
                 if is_measured_struct || has_attribute(&symbol.attributes, "StructLayout") {
                     result.insert(symbol.id);
@@ -327,14 +328,29 @@ mod tests {
 
     #[test]
     fn padding_names_are_recognized_in_any_common_spelling() {
-        for name in ["_pad0", "_pad_1", "pad", "Padding", "_padding2", "Reserved1", "_reserved"] {
+        for name in [
+            "_pad0",
+            "_pad_1",
+            "pad",
+            "Padding",
+            "_padding2",
+            "Reserved1",
+            "_reserved",
+        ] {
             assert!(is_padding_name(name), "{name} reads as padding");
         }
     }
 
     #[test]
     fn names_that_only_start_like_padding_are_not_padding() {
-        for name in ["Paddle", "Padded", "_reserve", "ReservedSeats", "_unused", "Spread"] {
+        for name in [
+            "Paddle",
+            "Padded",
+            "_reserve",
+            "ReservedSeats",
+            "_unused",
+            "Spread",
+        ] {
             assert!(!is_padding_name(name), "{name} is not padding");
         }
     }
