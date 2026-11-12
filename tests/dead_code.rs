@@ -291,3 +291,17 @@ fn inline_suppression_comments_filter_findings() {
         ],
     );
 }
+
+#[test]
+fn hot_reload_handler_methods_are_entry_points() {
+    // `[assembly: MetadataUpdateHandler(typeof(HotReload))]` makes the runtime
+    // call HotReload.ClearCache and HotReload.UpdateApplication by name. Other
+    // methods on the handler, and the same names on other types, stay dead.
+    assert_findings(
+        findings("metadata_update_handler", false),
+        vec![
+            member("App.HotReload.Unused"),
+            member("App.NotAHandler.ClearCache"),
+        ],
+    );
+}
