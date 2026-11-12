@@ -569,7 +569,7 @@ fn cycle_member(
     let file = &workspace.files[symbol.file.index()];
 
     CycleMember {
-        name: resolution.display_name(id, rodeo),
+        name: resolution.generic_name(id, rodeo),
         project: project_name(workspace, file.project),
         file: file.path.clone(),
         line: symbol.line,

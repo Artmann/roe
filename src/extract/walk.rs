@@ -494,15 +494,18 @@ impl<'a> Walker<'a> {
             return;
         };
 
-        let arity = node
+        let type_parameters: SmallVec<[Spur; 2]> = node
             .children(&mut node.walk())
             .find(|c| c.kind() == "type_parameter_list")
             .map(|list| {
                 list.children(&mut list.walk())
                     .filter(|c| c.kind() == "type_parameter")
-                    .count() as u8
+                    .filter_map(|parameter| parameter.child_by_field_name("name"))
+                    .map(|name| self.intern(self.text(name)))
+                    .collect()
             })
-            .unwrap_or(0);
+            .unwrap_or_default();
+        let arity = type_parameters.len() as u8;
 
         let mut base_names: SmallVec<[NamePath; 2]> = SmallVec::new();
         if let Some(base_list) = node
@@ -536,6 +539,7 @@ impl<'a> Walker<'a> {
             decl.namespace = namespace;
             decl.base_names = base_names;
             decl.arity = arity;
+            decl.type_parameters = type_parameters;
         });
 
         self.decl_stack.push(index);
@@ -715,6 +719,7 @@ impl<'a> Walker<'a> {
             cognitive: 0,
             body_lines: 0,
             parameters: ParameterBreakdown::default(),
+            type_parameters: SmallVec::new(),
             line: position.row as u32 + 1,
             column: position.column as u32 + 1,
         };

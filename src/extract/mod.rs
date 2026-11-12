@@ -62,6 +62,9 @@ pub struct RawDecl {
     /// may leave out (methods/constructors/operators/indexers only; all zero
     /// otherwise). `total()` is the declared count as written in the source.
     pub parameters: ParameterBreakdown,
+    /// Type parameter names in declaration order (types only), so `Tween<T>`
+    /// can be told apart from `Tween` in output.
+    pub type_parameters: SmallVec<[Spur; 2]>,
     pub line: u32,
     pub column: u32,
 }
