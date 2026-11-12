@@ -710,6 +710,22 @@ impl<'a> Walker<'a> {
             let Some(name_node) = declarator.child_by_field_name("name") else {
                 continue;
             };
+
+            // Error recovery can build a declarator out of whatever follows a
+            // construct the grammar doesn't know, such as C# 14's `a?.B = x;`.
+            // Its name is then missing or a keyword like `true`. Keep the
+            // references in it, but declare nothing.
+            if !is_declarable_name(name_node, self.text(name_node)) {
+                let mut inner = declarator.walk();
+                for child in declarator.children(&mut inner) {
+                    if child.kind() != "identifier" {
+                        self.walk(child, false);
+                    }
+                }
+
+                continue;
+            }
+
             let interned_name = self.intern(self.text(name_node));
             let index = self.push_decl_named(
                 node,
@@ -1209,6 +1225,98 @@ fn count_parameters(node: Node, source: &[u8]) -> ParameterBreakdown {
     breakdown
 }
 
+/// Whether a name node can be a declared name. A MISSING node, an empty name
+/// or a reserved keyword only comes out of error recovery: a real declaration
+/// can't be named `true` without an `@`, and `@true` keeps its `@` here.
+fn is_declarable_name(name_node: Node, text: &str) -> bool {
+    !name_node.is_missing() && !text.is_empty() && !is_reserved_keyword(text)
+}
+
+/// C#'s reserved keywords. Contextual keywords (`var`, `record`, `value`, …)
+/// are valid names and are not listed.
+fn is_reserved_keyword(text: &str) -> bool {
+    matches!(
+        text,
+        "abstract"
+            | "as"
+            | "base"
+            | "bool"
+            | "break"
+            | "byte"
+            | "case"
+            | "catch"
+            | "char"
+            | "checked"
+            | "class"
+            | "const"
+            | "continue"
+            | "decimal"
+            | "default"
+            | "delegate"
+            | "do"
+            | "double"
+            | "else"
+            | "enum"
+            | "event"
+            | "explicit"
+            | "extern"
+            | "false"
+            | "finally"
+            | "fixed"
+            | "float"
+            | "for"
+            | "foreach"
+            | "goto"
+            | "if"
+            | "implicit"
+            | "in"
+            | "int"
+            | "interface"
+            | "internal"
+            | "is"
+            | "lock"
+            | "long"
+            | "namespace"
+            | "new"
+            | "null"
+            | "object"
+            | "operator"
+            | "out"
+            | "override"
+            | "params"
+            | "private"
+            | "protected"
+            | "public"
+            | "readonly"
+            | "ref"
+            | "return"
+            | "sbyte"
+            | "sealed"
+            | "short"
+            | "sizeof"
+            | "stackalloc"
+            | "static"
+            | "string"
+            | "struct"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "uint"
+            | "ulong"
+            | "unchecked"
+            | "unsafe"
+            | "ushort"
+            | "using"
+            | "virtual"
+            | "void"
+            | "volatile"
+            | "while"
+    )
+}
+
 /// A default value is a bare `= expression` tail on the parameter with no
 /// wrapper node of its own, so the `=` token is what there is to look for.
 fn has_default_value(parameter: Node) -> bool {
@@ -1381,6 +1489,13 @@ class H
             !names.iter().any(|name| name.is_empty() || name == "true"),
             "got {names:?}"
         );
+    }
+
+    #[test]
+    fn a_verbatim_keyword_field_is_still_declared() {
+        let (facts, rodeo) = extract("class C { int @class; }");
+
+        assert_eq!(decl_names(&facts, &rodeo), vec!["C", "@class"]);
     }
 
     #[test]

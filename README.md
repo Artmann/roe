@@ -522,6 +522,9 @@ globs are.
 - Razor/`.cshtml` markup is not parsed — build first so `obj/` generated
   sources stand in for it.
 - Compiler-synthesized calls (e.g. range/index polyfills) are invisible.
+- C# 14 syntax (null-conditional assignment, `extension` blocks, the `field`
+  keyword) is not fully parsed yet. Declarations the parser has to guess at
+  are skipped rather than reported, but references around them can be missed.
 - `roe dupes` does not de-duplicate overlapping/nested occurrences of the same
   pattern repeated within a single long method — each is reported as-is.
 
