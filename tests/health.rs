@@ -465,6 +465,30 @@ fn a_cycle_names_generic_types_with_their_type_parameters() {
 }
 
 #[test]
+fn a_cycle_never_runs_against_the_direction_of_project_references() {
+    // App references Lib, so a cycle through both would need Lib to depend on
+    // App, which MSBuild doesn't allow. Same-named members in Lib must not
+    // create that edge.
+    let analysis =
+        analyze(&fixture("project_scoped_names"), lenient()).expect("analysis should succeed");
+
+    let cycles: Vec<Vec<&str>> = analysis
+        .result
+        .cycles
+        .iter()
+        .map(|cycle| {
+            cycle
+                .path
+                .iter()
+                .map(|member| member.name.as_str())
+                .collect()
+        })
+        .collect();
+
+    assert!(cycles.is_empty(), "got {cycles:?}");
+}
+
+#[test]
 fn generated_file_is_never_flagged() {
     // Even with thresholds tight enough to flag GeneratedThing.Complex many
     // times over, the generated file must produce nothing.
