@@ -33,7 +33,8 @@ internal readonly struct Pair<TFirst, TSecond>(TFirst first, TSecond second)
     public Pair<TSecond, TFirst> Swapped() => Pair.Of(second, first);
 }
 
-// A type nested in a generic type carries the outer type's parameters.
+// A cycle through a type nested in a generic type is reported as the outer
+// type, so the outer type's parameters are what the reader sees.
 internal sealed class Pool<T>
 {
     public sealed class Slot(Registry registry)

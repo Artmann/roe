@@ -458,7 +458,7 @@ fn a_cycle_names_generic_types_with_their_type_parameters() {
         cycles,
         vec![
             vec!["App.Pair", "App.Pair<TFirst, TSecond>"],
-            vec!["App.Pool<T>.Slot", "App.Registry"],
+            vec!["App.Pool<T>", "App.Registry"],
             vec!["App.Tween", "App.Tween<T>"],
         ]
     );
