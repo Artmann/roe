@@ -402,6 +402,34 @@ fn alpha_and_beta_form_a_circular_dependency() {
 }
 
 #[test]
+fn a_type_and_its_nested_types_are_not_a_cycle_but_cycles_through_them_are() {
+    // PhaseClock ↔ PhaseClock.Measure is one type's implementation, so it is
+    // not reported. Scheduler.Job → Worker → Scheduler is a real cycle, and it
+    // is reported as the outer type, which is the one a fix has to touch.
+    let analysis =
+        analyze(&fixture("health_nested_cycle"), lenient()).expect("analysis should succeed");
+
+    let cycles: Vec<Vec<&str>> = analysis
+        .result
+        .cycles
+        .iter()
+        .map(|cycle| {
+            let mut names: Vec<&str> = cycle
+                .path
+                .iter()
+                .chain(&cycle.others)
+                .map(|member| member.name.as_str())
+                .collect();
+            names.sort_unstable();
+
+            names
+        })
+        .collect();
+
+    assert_eq!(cycles, vec![vec!["App.Scheduler", "App.Worker"]]);
+}
+
+#[test]
 fn generated_file_is_never_flagged() {
     // Even with thresholds tight enough to flag GeneratedThing.Complex many
     // times over, the generated file must produce nothing.
