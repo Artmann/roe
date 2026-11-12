@@ -1,3 +1,5 @@
+use rustc_hash::FxHashSet;
+
 use crate::config::EntryPointGlob;
 use crate::extract::Interner;
 
@@ -21,6 +23,10 @@ const INERT_ATTRIBUTES: &[&str] = &[
 
 /// Methods invoked reflectively by hosting conventions.
 const MAGIC_METHOD_NAMES: &[&str] = &["Main", "ConfigureServices", "Configure"];
+
+/// Methods the runtime calls by name on a type registered with
+/// `[assembly: MetadataUpdateHandler(typeof(T))]`, after every hot reload.
+const HOT_RELOAD_METHOD_NAMES: &[&str] = &["ClearCache", "UpdateApplication"];
 
 /// Compiler-synthesized polyfills for language features on older TFMs:
 /// referenced only by the compiler (emitted into IL), never from source, so
@@ -98,6 +104,17 @@ pub fn mark_roots(
         .iter()
         .map(|name| rodeo.get_or_intern(name))
         .collect();
+    let hot_reload_methods: Vec<lasso::Spur> = HOT_RELOAD_METHOD_NAMES
+        .iter()
+        .map(|name| rodeo.get_or_intern(name))
+        .collect();
+    // Matched by simple name: a same-named type elsewhere only keeps two
+    // extra methods alive, which is the safe direction.
+    let hot_reload_handlers: FxHashSet<lasso::Spur> = facts
+        .iter()
+        .flat_map(|file_facts| &file_facts.hot_reload_handlers)
+        .filter_map(|path| path.last().copied())
+        .collect();
     let startup = rodeo.get_or_intern("Startup");
     let compiler_polyfill_fqns: Vec<lasso::Spur> = COMPILER_POLYFILL_FQNS
         .iter()
@@ -130,6 +147,13 @@ pub fn mark_roots(
                 if let Some(parent) = symbol.parent
                     && is_controller(&resolution.symbols[parent.index()], rodeo)
                     && symbol.modifiers.contains(Modifiers::PUBLIC)
+                {
+                    is_root = true;
+                }
+                // Hot reload handlers: the runtime calls these by name.
+                if hot_reload_methods.contains(&symbol.name)
+                    && let Some(parent) = symbol.parent
+                    && hot_reload_handlers.contains(&resolution.symbols[parent.index()].name)
                 {
                     is_root = true;
                 }
