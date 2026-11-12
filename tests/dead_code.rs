@@ -350,3 +350,10 @@ fn fields_of_layout_sensitive_structs_are_never_flagged() {
         ],
     );
 }
+
+#[test]
+fn null_conditional_assignment_does_not_invent_fields() {
+    // `a?.B = x;` is C# 14. The grammar's error recovery used to turn the
+    // lines after it into private fields named `` and `true`.
+    assert_findings(findings("null_conditional_assignment", false), vec![]);
+}
