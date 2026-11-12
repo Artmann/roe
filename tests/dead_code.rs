@@ -305,3 +305,10 @@ fn hot_reload_handler_methods_are_entry_points() {
         ],
     );
 }
+
+#[test]
+fn foreach_uses_a_pattern_based_enumerator() {
+    // `foreach` calls GetEnumerator, MoveNext, Current and Dispose, and
+    // `await foreach` the async forms, without naming any of them.
+    assert_findings(findings("foreach_enumerator", false), vec![]);
+}
