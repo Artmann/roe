@@ -1181,6 +1181,61 @@ mod tests {
     }
 
     #[test]
+    fn a_product_in_an_argument_is_two_uses_not_a_pointer_declaration() {
+        // tree-sitter reads `A * ticks` in an argument as a declaration
+        // expression of a pointer-typed variable `ticks`. Without `out` or
+        // `ref` that can't be a declaration, so both names are uses.
+        let (facts, rodeo) = extract(
+            r#"
+class C(int ticks)
+{
+    const float A = 0.5f;
+    readonly float _a = MathF.Ceiling(A * ticks);
+}
+"#,
+        );
+
+        let ambient: Vec<String> = facts
+            .refs
+            .iter()
+            .filter(|reference| reference.kind == RawRefKind::Ambient)
+            .map(|reference| {
+                reference
+                    .path
+                    .iter()
+                    .map(|segment| rodeo.resolve(segment))
+                    .collect::<Vec<_>>()
+                    .join(".")
+            })
+            .collect();
+
+        assert!(
+            ambient.contains(&"A".to_string()) && ambient.contains(&"ticks".to_string()),
+            "both operands are ambient uses, got {ambient:?}"
+        );
+    }
+
+    #[test]
+    fn an_out_pointer_declaration_in_an_argument_still_declares() {
+        // `out int* pointer` really is a declaration: `pointer` is a new name,
+        // not a use.
+        let (facts, rodeo) = extract(
+            r#"
+unsafe class C
+{
+    void M() { Fill(out Item* pointer); }
+}
+"#,
+        );
+
+        assert!(
+            !ref_names(&facts, &rodeo).contains(&"pointer".to_string()),
+            "a declared name is not a use, got {:?}",
+            ref_names(&facts, &rodeo)
+        );
+    }
+
+    #[test]
     fn extracts_types_members_and_namespaces() {
         let (facts, rodeo) = extract(
             r#"
