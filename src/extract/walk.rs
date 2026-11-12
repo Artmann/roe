@@ -24,6 +24,7 @@ pub fn extract(file: FileId, source: &[u8], root: Node, rodeo: &Interner) -> Fil
             has_errors: root.has_error(),
             hot_reload_handlers: Vec::new(),
             is_generated: false,
+            layout_types: Vec::new(),
             line_count: root.end_position().row as u32 + 1,
         },
         namespace_stack: Vec::new(),
@@ -117,6 +118,16 @@ impl<'a> Walker<'a> {
 
             "invocation_expression" => {
                 self.mark_scan_target(node);
+                self.mark_layout_measure(node);
+                self.walk_children(node, type_ctx);
+            }
+
+            // `sizeof(T)` and `T*` both depend on T's exact memory layout.
+            "sizeof_expression" | "pointer_type" => {
+                if let Some(measured) = node.child_by_field_name("type") {
+                    self.record_layout_type(measured);
+                }
+
                 self.walk_children(node, type_ctx);
             }
 
@@ -377,6 +388,52 @@ impl<'a> Walker<'a> {
         }
         let path = self.name_path(type_args[0]);
         self.emit(RawRefKind::ScanTarget, path);
+    }
+
+    /// `Unsafe.SizeOf<T>()`, `Marshal.SizeOf<T>()` and `Marshal.OffsetOf<T>()`
+    /// measure T's layout, the same as `sizeof(T)`.
+    fn mark_layout_measure(&mut self, node: Node) {
+        let Some(function) = node.child_by_field_name("function") else {
+            return;
+        };
+
+        let generic = match function.kind() {
+            "generic_name" => Some(function),
+            "member_access_expression" => function
+                .child_by_field_name("name")
+                .filter(|name| name.kind() == "generic_name"),
+            _ => None,
+        };
+
+        let Some(generic) = generic else {
+            return;
+        };
+
+        let mut cursor = generic.walk();
+        let mut children = generic.named_children(&mut cursor);
+
+        let is_measure = children
+            .next()
+            .is_some_and(|name| matches!(self.text(name), "SizeOf" | "OffsetOf"));
+
+        if !is_measure {
+            return;
+        }
+
+        let Some(arguments) = children.find(|child| child.kind() == "type_argument_list") else {
+            return;
+        };
+
+        let mut inner = arguments.walk();
+        if let Some(measured) = arguments.named_children(&mut inner).next() {
+            self.record_layout_type(measured);
+        }
+    }
+
+    fn record_layout_type(&mut self, node: Node) {
+        if let Some(&name) = self.name_path(node).last() {
+            self.facts.layout_types.push(name);
+        }
     }
 
     fn attribute_ref(&mut self, node: Node) {

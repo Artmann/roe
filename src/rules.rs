@@ -1,7 +1,7 @@
-use crate::extract::Interner;
+use crate::extract::{FileFacts, Interner};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::model::{MemberKind, Modifiers, SymbolId, SymbolKind, Visibility, Workspace};
+use crate::model::{MemberKind, Modifiers, SymbolId, SymbolKind, TypeKind, Visibility, Workspace};
 use crate::resolve::{Resolution, SymbolFlags};
 
 /// Apply the false-positive kill list: mark members that must never be
@@ -11,10 +11,12 @@ use crate::resolve::{Resolution, SymbolFlags};
 pub fn apply_kill_list(
     resolution: &mut Resolution,
     workspace: &Workspace,
+    facts: &[FileFacts],
     rodeo: &Interner,
     aggressive: bool,
 ) {
     let interface_member_names = interface_satisfaction_sets(resolution, rodeo);
+    let layout_types = layout_sensitive_types(resolution, facts, rodeo);
 
     for index in 0..resolution.symbols.len() {
         let symbol = &resolution.symbols[index];
@@ -22,6 +24,27 @@ pub fn apply_kill_list(
 
         match symbol.kind {
             SymbolKind::Member(kind) => {
+                // Fields of a struct whose memory layout matters (GPU
+                // buffers, native interop) hold their place even when C#
+                // never reads them: removing one shifts everything after it.
+                if kind == MemberKind::Field
+                    && !symbol
+                        .modifiers
+                        .intersects(Modifiers::CONST | Modifiers::STATIC)
+                    && let Some(parent) = symbol.parent
+                {
+                    let is_struct = matches!(
+                        resolution.symbols[parent.index()].kind,
+                        SymbolKind::Type(TypeKind::Struct)
+                    );
+
+                    if layout_types.contains(&parent)
+                        || (is_struct && is_padding_name(rodeo.resolve(&symbol.name)))
+                    {
+                        flags |= SymbolFlags::LIVE_WITH_TYPE;
+                    }
+                }
+
                 // Structurally invoked: call sites never name these.
                 if matches!(
                     kind,
@@ -150,6 +173,70 @@ fn is_inline_array(attributes: &[lasso::Spur], rodeo: &Interner) -> bool {
     })
 }
 
+/// Types whose memory layout is observed somewhere, so none of their instance
+/// fields can be removed:
+///
+/// - `[StructLayout(...)]` on the type, or `[FieldOffset]` on any field.
+/// - A struct named in `sizeof(T)`, `Unsafe.SizeOf<T>()`,
+///   `Marshal.SizeOf<T>()`, `Marshal.OffsetOf<T>()`, or as a `T*` pointer.
+///
+/// Measured types match by simple name. A same-named struct elsewhere only
+/// keeps a few extra fields alive, which is the safe direction.
+fn layout_sensitive_types(
+    resolution: &Resolution,
+    facts: &[FileFacts],
+    rodeo: &Interner,
+) -> FxHashSet<SymbolId> {
+    let measured: FxHashSet<lasso::Spur> = facts
+        .iter()
+        .flat_map(|file_facts| file_facts.layout_types.iter().copied())
+        .collect();
+
+    let has_attribute = |attributes: &[lasso::Spur], name: &str| {
+        attributes.iter().any(|attribute| {
+            let text = rodeo.resolve(attribute);
+
+            text == name || text.strip_suffix("Attribute") == Some(name)
+        })
+    };
+
+    let mut result: FxHashSet<SymbolId> = FxHashSet::default();
+
+    for symbol in &resolution.symbols {
+        match symbol.kind {
+            SymbolKind::Type(kind) => {
+                let is_measured_struct = kind == TypeKind::Struct && measured.contains(&symbol.name);
+
+                if is_measured_struct || has_attribute(&symbol.attributes, "StructLayout") {
+                    result.insert(symbol.id);
+                }
+            }
+            SymbolKind::Member(MemberKind::Field) => {
+                if has_attribute(&symbol.attributes, "FieldOffset")
+                    && let Some(parent) = symbol.parent
+                {
+                    result.insert(parent);
+                }
+            }
+            SymbolKind::Member(_) | SymbolKind::FileRoot => {}
+        }
+    }
+
+    result
+}
+
+/// Whether a struct field is named as padding: `_pad0`, `padding`,
+/// `Reserved1`, `_pad_2`. Leading and trailing underscores and trailing digits
+/// are ignored, and case doesn't matter.
+fn is_padding_name(name: &str) -> bool {
+    let stem = name
+        .trim_start_matches('_')
+        .trim_end_matches(|character: char| character.is_ascii_digit() || character == '_')
+        .to_ascii_lowercase();
+
+    matches!(stem.as_str(), "pad" | "padding" | "reserved")
+}
+
 struct SatisfactionSet {
     /// Member names declared by in-source interfaces in the base closure.
     names: FxHashSet<lasso::Spur>,
@@ -232,4 +319,23 @@ fn interface_satisfaction_sets(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_padding_name;
+
+    #[test]
+    fn padding_names_are_recognized_in_any_common_spelling() {
+        for name in ["_pad0", "_pad_1", "pad", "Padding", "_padding2", "Reserved1", "_reserved"] {
+            assert!(is_padding_name(name), "{name} reads as padding");
+        }
+    }
+
+    #[test]
+    fn names_that_only_start_like_padding_are_not_padding() {
+        for name in ["Paddle", "Padded", "_reserve", "ReservedSeats", "_unused", "Spread"] {
+            assert!(!is_padding_name(name), "{name} is not padding");
+        }
+    }
 }

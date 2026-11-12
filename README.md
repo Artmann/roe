@@ -158,6 +158,13 @@ extension methods. Public auto-properties and
 enum members are treated as serializer fodder and skipped by default — opt
 in with `--aggressive`.
 
+Instance fields of a struct whose memory layout matters are never reported
+either, since removing one shifts every field after it. That covers types with
+`[StructLayout]` or a `[FieldOffset]` field, structs measured with `sizeof(T)`,
+`Unsafe.SizeOf<T>()`, `Marshal.SizeOf<T>()` or `Marshal.OffsetOf<T>()`,
+structs used through a `T*` pointer, and struct fields named as padding
+(`_pad0`, `_padding`, `Reserved1`).
+
 ### `roe dupes`
 
 Finds duplicated — copy-pasted, and optionally copy-pasted-and-renamed —
