@@ -324,3 +324,10 @@ fn the_element_field_of_an_inline_array_is_never_flagged() {
         vec![member("App.Slots.Spare"), member("App.Slots.Unused")],
     );
 }
+
+#[test]
+fn a_const_in_a_field_initializer_call_next_to_a_primary_constructor_parameter_is_used() {
+    // `(int)MathF.Ceiling(A * ticks)` in a field initializer, where `ticks` is
+    // a primary-constructor parameter, must still count as a use of `A`.
+    assert_findings(findings("field_initializer_const", false), vec![]);
+}
