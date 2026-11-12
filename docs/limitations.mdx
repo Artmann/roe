@@ -23,6 +23,10 @@ but it comes with known blind spots:
 - **Razor/`.cshtml` markup is not parsed** — build first so the generated
   sources in `obj/` stand in for it.
 - **Compiler-synthesized calls are invisible** (e.g. range/index polyfills).
+- **C# 14 syntax is not fully parsed yet** — null-conditional assignment
+  (`a?.B = x;`), `extension` blocks, and the `field` keyword come from a
+  newer grammar than roe ships with. Declarations the parser has to guess at
+  are skipped rather than reported, but references around them can be missed.
 - **`roe dupes` does not de-duplicate overlapping or nested occurrences** of
   the same pattern repeated within a single long method — each is reported
   as-is.
