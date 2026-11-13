@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/Artmann/roe/compare/roe-v1.5.2...roe-v1.6.0) (2026-11-13)
+
+
+### Features
+
+* **perf:** Add a perf command that ranks costly patterns by how often they run. ([afed8d4](https://github.com/Artmann/roe/commit/afed8d4f8ed2657aa182490079b7226e946c9c14))
+
 ## [1.5.2](https://github.com/Artmann/roe/compare/roe-v1.5.1...roe-v1.5.2) (2026-11-13)
 
 
