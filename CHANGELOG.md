@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/Artmann/roe/compare/roe-v1.5.1...roe-v1.5.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **check:** Discard the per-report exit codes explicitly. ([bf5d921](https://github.com/Artmann/roe/commit/bf5d921f94d951bba1b63295b5c93837e01fc6f4))
+
 ## [1.5.1](https://github.com/Artmann/roe/compare/roe-v1.5.0...roe-v1.5.1) (2026-11-12)
 
 
