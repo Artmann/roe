@@ -32,12 +32,15 @@ pub fn emit(
 ) -> ExitCode {
     match format {
         OutputFormat::Human => {
+            // Each report returns its own exit code. They are dropped here
+            // because the combined exit code is worked out once, below, from
+            // all three results.
             section("dead-code");
-            report::emit(&dead_code.result, &dead_code.workspace, format);
+            let _ = report::emit(&dead_code.result, &dead_code.workspace, format);
 
             println!();
             section("dupes");
-            report::dupes::emit(
+            let _ = report::dupes::emit(
                 &dupes.result,
                 &dupes.workspace,
                 format,
@@ -49,7 +52,7 @@ pub fn emit(
 
             println!();
             section("health");
-            report::health::emit(
+            let _ = report::health::emit(
                 &health.result,
                 &health.workspace,
                 format,
