@@ -3,9 +3,10 @@
 # roe
 
 Codebase intelligence for C#. Finds dead code — unused types, members, and
-files — duplicated code, and complexity/coupling hotspots, so you can delete
-what's unused, de-duplicate what's copy-pasted, and clean up what's hard to
-work with. Static analysis only; roe never runs the code it analyzes.
+files — duplicated code, complexity/coupling hotspots, and quick performance
+wins, so you can delete what's unused, de-duplicate what's copy-pasted, clean
+up what's hard to work with, and speed up what runs often. Static analysis
+only; roe never runs the code it analyzes.
 
 [![npm](https://img.shields.io/npm/v/roe-cli)](https://www.npmjs.com/package/roe-cli)
 [![NuGet](https://img.shields.io/nuget/v/roe)](https://www.nuget.org/packages/roe/)
@@ -87,10 +88,14 @@ xattr -d com.apple.quarantine ./roe
 
 ## Commands
 
-roe has three analyses: `dead-code`, `dupes`, and `health`. All accept a path
-to a directory, a `.sln` file, or a `.csproj` file (default: the current
-directory), and all exit `0` when clean, `1` when they have findings to
-report, and `2` on error.
+roe has four analyses: `dead-code`, `dupes`, `health`, and `perf`. All accept
+a path to a directory, a `.sln` file, or a `.csproj` file (default: the
+current directory), and all exit `0` when clean, `1` when they have findings
+to report, and `2` on error. (`perf` is the one exception to that last part —
+see [`roe perf`](#roe-perf).)
+
+`roe` with no command runs the first three. `perf` is opt-in, so upgrading roe
+can't change what an existing CI gate reports.
 
 ### `roe` / `roe check`
 
@@ -411,6 +416,138 @@ Three things worth knowing:
 The idea is Adam Tornhill's, from *Your Code as a Crime Scene*; the scoring
 formula here matches [Fallow's](https://docs.fallow.tools/cli/health#hotspot-score-formula).
 
+### `roe perf`
+
+Finds quick performance wins: patterns that are known to waste time, ranked by
+how often each one runs. A `.Contains` on a `List<T>` costs the same wherever
+you write it — but three loops deep inside a request handler it runs a hundred
+times per call, and in `Program.Main` it runs once. `roe perf` sorts by that
+difference, so the top of the report is where the time actually goes.
+
+```
+$ roe perf path/to/solution
+
+src/App/Orders/OrderReportService.cs (App)
+    29:34  n+1 query         `FirstOrDefaultAsync` runs one query per `order`
+           ~10× per call · high
+           → fetch the rows for the whole collection in one query before the loop, then match them in memory
+
+    32:17  list lookup       `_blockedSkus.Contains` walks the whole collection, once per pass
+           ~10× per call · medium
+           → declare `_blockedSkus` as a HashSet<T> — membership then costs one hash lookup
+
+src/App/Billing/InvoiceService.cs (App)
+    18:16  sync-over-async   `client.GetStringAsync(url).Result` blocks the calling thread until the task finishes
+           ~1× per call · high
+           → await the task instead — under load this deadlocks or exhausts the thread pool
+
+found 3 quick wins, 2 gating — 3 project(s), 214 file(s) scanned in 88 ms
+  1 n+1 query · 1 list lookup · 1 sync-over-async
+```
+
+```
+roe perf [PATH]                    # directory, .sln, or .csproj (default: cwd)
+roe perf --format json             # machine-readable, stable v1 schema
+roe perf --confidence high         # only the findings roe is certain about
+roe perf --sort path               # order by file path instead of by score
+roe perf --limit 20                # print at most 20 findings (default: all)
+roe perf --exclude-tests           # skip test projects (default: off)
+roe perf --config PATH             # use this roe.json/roe.yaml instead of auto-discovery
+```
+
+The checks:
+
+| Check | Cost | Confidence | Flags |
+| --- | --- | --- | --- |
+| `sync-over-async` | Severe | High | `.Result`, `.Wait()`, `.GetAwaiter().GetResult()` |
+| `n-plus-one-query` | Severe | High | A database call in a loop that depends on the loop variable |
+| `save-changes-in-loop` | Severe | High | `SaveChanges`/`SaveChangesAsync` inside a loop |
+| `transient-http-client` | Severe | High | `new HttpClient()` outside a field initializer |
+| `list-lookup-in-loop` | Severe | Medium | A scanning call in a loop on a name declared `List<T>` or an array |
+| `string-concat-in-loop` | High | High | `+=` in a loop on a name declared `string` |
+| `blocking-sleep-in-async` | High | High | `Thread.Sleep` inside an `async` member |
+| `loop-invariant-query` | High | High | A database call in a loop that re-fetches the same rows every pass |
+| `await-in-loop` | High | Medium | An `await` in a loop no database check already covers |
+| `regex-per-call` | High | Medium | `new Regex("literal")` in a method body |
+| `case-insensitive-compare` | Moderate | High | `a.ToLower() == b.ToLower()` and its `ToUpper` variants |
+| `redundant-linq` | Moderate | Medium | `.Count() > 0`, `.Where(p).First()`, `.OrderBy(k).First()`, `.ToList().Where(…)` |
+| `unstable-clock` | Moderate | Medium | `DateTime.Now` / `DateTimeOffset.Now` |
+
+#### How findings are ranked
+
+Every finding carries three separate numbers, and keeping them apart is what
+makes the ranking honest.
+
+**Cost** is how much runtime the pattern wastes each time it executes, fixed
+per check: `Severe` (100), `High` (10), `Moderate` (3). **Heat** is how often
+it runs — `10^depth`, where depth is the number of loops around it inside its
+own method, capped at three so one pathological nest can't own the report.
+**Score** is `cost × heat`, and that's the sort order: a moderate finding two
+loops deep (3 × 100 = 300) outranks a severe one that runs once (100 × 1 =
+100), which is the whole argument for ranking rather than listing.
+
+A lambda passed to a per-element LINQ operator — `.Select`, `.Where`, `.Sum`,
+`.OrderBy` — counts as a loop level, because it is one.
+
+**Confidence** is how sure roe is that a finding is real, and it decides the
+exit code and nothing else. A `.Result` is a `.Result`, so it fails the build.
+A `List<T>.Contains` in a loop is roe reading a declaration and drawing a
+conclusion — worth your attention, not worth blocking a merge over:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Clean, **or** only medium-confidence findings were reported. |
+| `1` | At least one high-confidence finding. |
+| `2` | Error. |
+
+So a run can print a page of advice and still pass, and the footer says why:
+
+```
+found 3 quick wins, none gating — 1 project(s), 118 file(s) scanned in 42 ms
+  1 list lookup · 1 regex per call · 1 unstable clock
+  exit 0 — only high-confidence findings fail a build
+```
+
+Confidence deliberately stays out of the ranking: a medium-confidence finding
+running 1000× per call is still the most valuable thing in the report.
+`--confidence high` narrows what's *reported* without changing the exit code,
+which is the flag to reach for when adopting roe on a codebase that already
+has a backlog.
+
+#### Types, and the silence when there isn't one
+
+roe never compiles the code it reads, so it has no type information. The
+database checks don't need any — EF's async method names (`ToListAsync`,
+`FirstOrDefaultAsync`, `SaveChangesAsync`, …) are unambiguous, and the **sync**
+versions are ordinary LINQ over in-memory sequences and are deliberately never
+matched.
+
+`list-lookup-in-loop` and `string-concat-in-loop` read the type as written in
+the source — fields, parameters, explicitly typed locals, and `var` bound
+directly to a `new`. A name roe hasn't seen declared produces **no finding at
+all**:
+
+```csharp
+foreach (var sku in skus)
+{
+    _blocked.Contains(sku);   // flagged — declared List<string>, a linear scan
+    _allowed.Contains(sku);   // silent — declared HashSet<string>
+    Lookup().Contains(sku);   // silent — roe has no idea what this returns
+}
+```
+
+That silence is the point: these are the two checks most likely to be wrong,
+and staying quiet when roe can't tell is what keeps them worth reading.
+
+Any check can be turned off by name in a [config file](#suppressing-findings):
+
+```json
+{ "perf": { "disabledChecks": ["unstable-clock", "redundant-linq"] } }
+```
+
+Whatever is disabled is named in the footer, so "clean" and "not looked for"
+never read the same.
+
 ## Suppressing findings
 
 Two mechanisms let you mark a finding as a false positive.
@@ -437,10 +574,13 @@ it suppresses any finding kind on that line:
 | --- | --- |
 | `roe dead-code` | `unused-type`, `unused-member`, `unused-file` |
 | `roe health` | `high-complexity`, `high-cognitive-complexity`, `long-method`, `too-many-parameters`, `large-file`, `large-type` |
+| `roe perf` | The [check names](#roe-perf) — `sync-over-async`, `n-plus-one-query`, `list-lookup-in-loop`, and the rest |
 
 Because a dead file's finding and a large file's finding are both pinned at
 line 1, an `unused-file` or `large-file` marker (or a bare marker) suppresses
-them from anywhere in the file.
+them from anywhere in the file. No perf check is file-wide: every perf finding
+sits on a real line, so a marker only ever covers the line it names. To turn a
+perf check off across the whole codebase instead, use `disabledChecks` below.
 
 Circular dependencies can't be suppressed inline — a cycle spans several
 types in several files, so there's no one line for the marker to sit on. Use
@@ -476,6 +616,10 @@ walking up from the analysis root to the nearest directory containing one
     "maxTypeMembers": 25,
     "excludeTests": true,
     "baseline": "roe-baseline.json"
+  },
+  "perf": {
+    "excludeTests": true,
+    "disabledChecks": ["unstable-clock", "redundant-linq"]
   }
 }
 ```
@@ -509,6 +653,13 @@ you thinking a limit is in force when it isn't. `baseline` names a baseline
 file, resolved relative to the config file's own directory the way `ignore`
 globs are.
 
+The `perf` block carries `excludeTests` and `disabledChecks`, the per-check off
+switch. There's no flag for `disabledChecks`: turning a check off is a decision
+about the codebase, so it belongs in a file the whole team shares rather than
+in one person's shell history. A name that isn't a check produces a warning
+naming the valid ones and leaves the check enabled — believing a check is off
+while it's still failing your build is the worse outcome.
+
 ## Known limitations
 
 - Name-based resolution conflates same-named symbols — dead code hiding
@@ -527,6 +678,13 @@ globs are.
   are skipped rather than reported, but references around them can be missed.
 - `roe dupes` does not de-duplicate overlapping/nested occurrences of the same
   pattern repeated within a single long method — each is reported as-is.
+- `roe perf` ranks by loop depth within a single method, so a cheap method
+  called from inside three loops elsewhere is not yet ranked as hot.
+- `roe perf` has no type information, which puts lazy-loaded EF navigation
+  properties (`foreach (var o in orders) total += o.Lines.Sum(…)` fires a
+  query per order with no method name to match on), boxing, `Span<T>`
+  opportunities, `AsNoTracking`, collection capacity hints, and
+  `ConfigureAwait` out of reach.
 
 ## Contributing
 

@@ -43,6 +43,10 @@ pub enum Command {
     /// Flag complexity, size, and coupling issues
     #[command(name = "health")]
     Health(HealthArgs),
+
+    /// Rank costly code patterns by how often they run
+    #[command(name = "perf")]
+    Perf(PerfArgs),
 }
 
 /// The combined run deliberately takes only the arguments that mean the same
@@ -221,6 +225,74 @@ pub enum HealthSort {
     Path,
 }
 
+#[derive(Debug, Args, PartialEq, Eq)]
+pub struct PerfArgs {
+    /// Path to the codebase root (defaults to the current directory)
+    pub path: Option<PathBuf>,
+
+    /// Output format
+    #[arg(long, short = 'f', value_enum, default_value_t = OutputFormat::Human)]
+    pub format: OutputFormat,
+
+    /// Report every finding, or only the high-confidence ones that decide the
+    /// exit code
+    #[arg(long, value_enum, default_value_t = ConfidenceFilter::All)]
+    pub confidence: ConfidenceFilter,
+
+    /// Order findings by estimated wasted runtime, or by file path
+    #[arg(long, value_enum, default_value_t = PerfSort::Score)]
+    pub sort: PerfSort,
+
+    /// Print at most this many findings; 0 prints all of them
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    pub limit: usize,
+
+    /// Skip declarations in test projects — a slow test is a different problem
+    /// from a slow request
+    #[arg(long)]
+    pub exclude_tests: bool,
+
+    /// Path to an explicit roe.json/roe.yaml/roe.yml config (skips
+    /// auto-discovery)
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+}
+
+impl Default for PerfArgs {
+    fn default() -> Self {
+        PerfArgs {
+            path: None,
+            format: OutputFormat::Human,
+            confidence: ConfidenceFilter::All,
+            sort: PerfSort::Score,
+            limit: 0,
+            exclude_tests: false,
+            config: None,
+        }
+    }
+}
+
+/// Which findings survive into the report.
+///
+/// Filtering to `high` never changes the exit code — only high-confidence
+/// findings gate either way — so this is for reading a legacy codebase's report
+/// without the guesses in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ConfidenceFilter {
+    /// Everything roe found, guesses included.
+    All,
+    /// Only the checks roe is sure about — the ones that fail a build.
+    High,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PerfSort {
+    /// Worst first, by what the pattern costs times how often it runs.
+    Score,
+    /// Grouped by file path, ascending — stable regardless of the ranking.
+    Path,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
     Human,
@@ -353,5 +425,6 @@ mod tests {
         assert_eq!(parse_bare::<DeadCodeArgs>(), DeadCodeArgs::default());
         assert_eq!(parse_bare::<DupesArgs>(), DupesArgs::default());
         assert_eq!(parse_bare::<HealthArgs>(), HealthArgs::default());
+        assert_eq!(parse_bare::<PerfArgs>(), PerfArgs::default());
     }
 }

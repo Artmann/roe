@@ -37,10 +37,12 @@ found 1 duplicate group · 46 duplicated lines — 3 project(s), 214 file(s) sca
 ✓ no health issues found · 3 project(s), 214 file(s) scanned in 68 ms
 ```
 
-## Three analyses, one command
+## Four analyses
 
-Run `roe` with no command and you get all three at once. Each analysis is also
-its own command when you want to focus on one, or tune its thresholds.
+Run `roe` with no command and you get the first three at once. Each analysis is
+also its own command when you want to focus on one, or tune its thresholds.
+`roe perf` is opt-in, so upgrading roe can't change what an existing CI gate
+reports.
 
 <CardGroup cols={2}>
   <Card title="roe check" icon="list-check" href="/commands/check">
@@ -58,6 +60,10 @@ its own command when you want to focus on one, or tune its thresholds.
   <Card title="roe health" icon="heart-pulse" href="/commands/health">
     Flag complex, oversized, and circularly dependent code, and rank the
     files that change most often.
+  </Card>
+  <Card title="roe perf" icon="gauge-high" href="/commands/perf">
+    Find quick performance wins, ranked by how often each one actually
+    runs.
   </Card>
 </CardGroup>
 

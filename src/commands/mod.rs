@@ -2,14 +2,17 @@ pub mod check;
 pub mod dead_code;
 pub mod dupes;
 pub mod health;
+pub mod perf;
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::Context as _;
+use rustc_hash::FxHashMap;
 
 use crate::extract::{self, FileFacts, Interner};
-use crate::model::Workspace;
+use crate::model::{MemberKind, ProjectId, SymbolId, SymbolKind, Workspace};
+use crate::resolve::Resolution;
 use crate::{config, discover};
 
 /// The stages `dead-code` and `health` compute identically: the discovered
@@ -36,7 +39,7 @@ impl Extracted {
         let started = Instant::now();
         let workspace = discover::discover(root)?;
         let rodeo = extract::new_interner();
-        let facts = extract::extract_all(&workspace.files, &rodeo);
+        let facts = extract::extract_all(&workspace.files, &rodeo, extract::PerfPass::Skip);
 
         Ok(Self {
             workspace,
@@ -107,6 +110,7 @@ pub enum Analysis {
     DeadCode,
     Dupes,
     Health,
+    Perf,
 }
 
 impl Context {
@@ -123,6 +127,7 @@ impl Context {
             Analysis::DeadCode => config.dead_code.as_ref().and_then(|c| c.ignore.as_deref()),
             Analysis::Dupes => config.dupes.as_ref().and_then(|c| c.ignore.as_deref()),
             Analysis::Health => config.health.as_ref().and_then(|c| c.ignore.as_deref()),
+            Analysis::Perf => config.perf.as_ref().and_then(|c| c.ignore.as_deref()),
         };
 
         let mut patterns = config.ignore.clone().unwrap_or_default();
@@ -136,10 +141,94 @@ impl Context {
     }
 }
 
+/// Display names for every declaration in one file, indexed by local decl
+/// index (non-members get an empty placeholder that nothing reads).
+///
+/// Overloads merge into a single symbol — `build_symbols` keys members on
+/// (type, name, kind) — so `display_name` returns the same string for
+/// `TryBeginActivation(Unit)` and `TryBeginActivation(Unit, Order)`, and a
+/// report listing both is two identical rows. Where that collision actually
+/// happens, the name gets a Roslyn-style `/arity` suffix. Where it doesn't,
+/// nothing is appended: an arity on a name with no overloads is noise.
+///
+/// Shared by `health` and `perf` so the same declaration is named identically
+/// in both reports.
+pub(crate) fn member_names(
+    resolution: &Resolution,
+    file_facts: &extract::FileFacts,
+    local_map: &[SymbolId],
+    rodeo: &Interner,
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::with_capacity(file_facts.decls.len());
+
+    for (local_index, decl) in file_facts.decls.iter().enumerate() {
+        if decl.kind.is_member() {
+            names.push(resolution.display_name(local_map[local_index], rodeo));
+        } else {
+            names.push(String::new());
+        }
+    }
+
+    let mut occurrences: FxHashMap<&str, u32> = FxHashMap::default();
+    for (name, decl) in names.iter().zip(&file_facts.decls) {
+        if takes_parameters(decl.kind) {
+            *occurrences.entry(name.as_str()).or_default() += 1;
+        }
+    }
+
+    let ambiguous: Vec<bool> = names
+        .iter()
+        .zip(&file_facts.decls)
+        .map(|(name, decl)| {
+            takes_parameters(decl.kind) && occurrences.get(name.as_str()).is_some_and(|&n| n > 1)
+        })
+        .collect();
+
+    for (local_index, is_ambiguous) in ambiguous.into_iter().enumerate() {
+        if is_ambiguous {
+            // The declared total, not the required count — the suffix exists
+            // to tell overloads apart, so it has to match the signature the
+            // reader will find in the source.
+            names[local_index].push_str(&format!(
+                "/{}",
+                file_facts.decls[local_index].parameters.total()
+            ));
+        }
+    }
+
+    names
+}
+
+/// Whether an arity suffix means anything for this kind. Fields and
+/// properties have no parameter list, so `Foo/0` would be a lie dressed as
+/// precision.
+fn takes_parameters(kind: SymbolKind) -> bool {
+    matches!(
+        kind,
+        SymbolKind::Member(
+            MemberKind::Method
+                | MemberKind::Constructor
+                | MemberKind::Indexer
+                | MemberKind::Operator
+                | MemberKind::ConversionOperator
+        )
+    )
+}
+
+pub(crate) fn in_test_project(workspace: &Workspace, project: Option<ProjectId>) -> bool {
+    project.is_some_and(|id| workspace.projects[id.index()].is_test())
+}
+
+pub(crate) fn project_name(workspace: &Workspace, project: Option<ProjectId>) -> Option<String> {
+    project.map(|id| workspace.projects[id.index()].name.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{DeadCodeConfig, DupesConfig, HealthConfig, ResolvedConfig, RoeConfig};
+    use crate::config::{
+        DeadCodeConfig, DupesConfig, HealthConfig, PerfConfig, ResolvedConfig, RoeConfig,
+    };
 
     fn context_with(config: RoeConfig) -> Context {
         Context {
@@ -187,16 +276,22 @@ mod tests {
                 ignore: Some(vec!["Models/".to_string()]),
                 ..Default::default()
             }),
+            perf: Some(PerfConfig {
+                ignore: Some(vec!["Scripts/".to_string()]),
+                ..Default::default()
+            }),
             ..Default::default()
         });
 
         let (dead_code, _) = context.ignore_for(Analysis::DeadCode).expect("patterns");
         let (dupes, _) = context.ignore_for(Analysis::Dupes).expect("patterns");
         let (health, _) = context.ignore_for(Analysis::Health).expect("patterns");
+        let (perf, _) = context.ignore_for(Analysis::Perf).expect("patterns");
 
         assert_eq!(dead_code, vec!["Plugins/".to_string()]);
         assert_eq!(dupes, vec!["Legacy/".to_string()]);
         assert_eq!(health, vec!["Models/".to_string()]);
+        assert_eq!(perf, vec!["Scripts/".to_string()]);
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod graph;
 pub mod hotspot;
 pub mod model;
 pub mod paths;
+pub mod perf;
 pub mod report;
 pub mod resolve;
 pub mod rules;
@@ -35,6 +36,7 @@ pub fn run() -> ExitCode {
         Some(cli::Command::DeadCode(args)) => commands::dead_code::run(args),
         Some(cli::Command::Dupes(args)) => commands::dupes::run(args),
         Some(cli::Command::Health(args)) => commands::health::run(args),
+        Some(cli::Command::Perf(args)) => commands::perf::run(args),
     };
 
     match result {

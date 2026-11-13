@@ -7,6 +7,7 @@ use crate::cli::HealthSort;
 use crate::model::{
     CircularDependency, HealthFinding, HealthFindingKind, HealthResult, HealthSummary, Workspace,
 };
+use crate::report::{name_projects, pluralize};
 
 /// Every check one declaration tripped, printed as a single entry.
 ///
@@ -177,18 +178,6 @@ fn print_exclusions(summary: &HealthSummary) {
     }
 
     println!("  {}", format!("excluded: {}", parts.join(", ")).dimmed());
-}
-
-/// Naming the projects answers the question a reader is really asking — "was
-/// my project even detected as a test project?" — but a solution with twenty
-/// of them must not push the findings off the screen, so the list stops at
-/// three.
-fn name_projects(names: &[String]) -> String {
-    if names.len() <= 3 {
-        return names.join(", ");
-    }
-
-    format!("{}, +{} more", names[..3].join(", "), names.len() - 3)
 }
 
 /// What a baseline kept out of the report, printed whenever one was in force
@@ -490,10 +479,6 @@ fn print_cycle(cycle: &CircularDependency, workspace: &Workspace) {
     }
 }
 
-fn pluralize(count: usize, noun: &str) -> String {
-    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
-}
-
 fn pluralize_dependencies(count: usize) -> String {
     format!(
         "{count} circular {}",
@@ -508,7 +493,8 @@ fn pluralize_dependencies(count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard};
+
+    use crate::report::forcing_color;
 
     use super::*;
 
@@ -533,25 +519,6 @@ mod tests {
             breakdown: None,
             parameters: None,
         }
-    }
-
-    #[test]
-    fn a_handful_of_excluded_projects_are_all_named() {
-        let names = ["Api.Tests".to_string(), "Lib.Tests".to_string()];
-
-        assert_eq!(name_projects(&names), "Api.Tests, Lib.Tests");
-    }
-
-    #[test]
-    fn a_long_list_of_excluded_projects_is_truncated() {
-        // A solution with twenty test projects must not push the findings off
-        // the screen.
-        let names: Vec<String> = (1..=6).map(|index| format!("P{index}.Tests")).collect();
-
-        assert_eq!(
-            name_projects(&names),
-            "P1.Tests, P2.Tests, P3.Tests, +3 more"
-        );
     }
 
     /// One printed group: its position, the declaration it names, and how many
@@ -623,36 +590,6 @@ mod tests {
                 ("a.cs", vec![(1, 1, "App.A.Mild", 1)]),
             ]
         );
-    }
-
-    /// Whether `colored` emits escapes at all is process-wide state, so the
-    /// tests that force it on have to take turns.
-    static COLOR_OVERRIDE: Mutex<()> = Mutex::new(());
-
-    /// Turn colour on for the duration of a test. The harness runs with
-    /// `NO_COLOR`, under which every band renders identically and a test of
-    /// which colour was chosen would assert nothing.
-    fn forcing_color() -> impl Drop {
-        // The lock is held for its lifetime alone and never read, hence the
-        // underscore — a plain field name would read as dead code.
-        struct Guard {
-            _lock: MutexGuard<'static, ()>,
-        }
-
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                colored::control::unset_override();
-            }
-        }
-
-        // A poisoned lock means another colour test panicked; the state it
-        // guards is reset below either way, so carry on rather than cascade.
-        let lock = COLOR_OVERRIDE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        colored::control::set_override(true);
-
-        Guard { _lock: lock }
     }
 
     #[test]

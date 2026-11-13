@@ -65,6 +65,11 @@ only when all three are clean, and `2` on error. See
 roe .            # one gate for a CI step
 ```
 
+<Note>
+  [`roe perf`](/commands/perf) is not one of the three. It's a separate step
+  you opt into, so upgrading roe can't change what this gate reports.
+</Note>
+
 ## JSON output
 
 `--format json` prints a single JSON document rather than three concatenated

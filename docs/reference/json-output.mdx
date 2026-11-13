@@ -237,3 +237,84 @@ including its own `version` and `root`, so anything already written against
   entry, and `--sort` and `--limit` apply to it alone — JSON is never
   reordered or truncated.
 </Note>
+
+## `roe perf --format json`
+
+```json
+{
+  "version": 1,
+  "root": "/path/to/solution",
+  "summary": {
+    "projects": 3,
+    "filesScanned": 214,
+    "findings": 3,
+    "gating": 2,
+    "counts": [
+      { "kind": "n-plus-one-query", "count": 1 },
+      { "kind": "list-lookup-in-loop", "count": 1 },
+      { "kind": "sync-over-async", "count": 1 }
+    ],
+    "elapsedMs": 88,
+    "excluded": {
+      "testProjects": ["App.Tests"],
+      "ignoredFiles": 4
+    }
+  },
+  "findings": [
+    {
+      "kind": "n-plus-one-query",
+      "confidence": "high",
+      "cost": "severe",
+      "gating": true,
+      "member": "App.Orders.OrderReportService.BuildAsync",
+      "project": "App",
+      "file": "src/App/Orders/OrderReportService.cs",
+      "line": 29,
+      "column": 34,
+      "loopDepth": 1,
+      "heat": 10.0,
+      "score": 1000.0,
+      "detail": "`FirstOrDefaultAsync` runs one query per `order`",
+      "fix": "fetch the rows for the whole collection in one query before the loop, then match them in memory"
+    }
+  ]
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `version` | Schema version, `1`. |
+| `root` | The analysis root path. |
+| `summary` | Scan totals: `projects`, `filesScanned`, `findings`, `gating`, `counts`, `elapsedMs`. The scan totals count what was eligible to be reported, so they narrow under `--exclude-tests` and the config's `ignore` globs. |
+| `summary.gating` | How many findings are high-confidence, and therefore how many make the command [exit `1`](/commands/perf#confidence-and-exit-codes). `findings` can be non-zero while this is `0`, which is the run that reports plenty and still passes. |
+| `summary.counts[]` | Findings per check — `kind` and `count` — with the check that produced the top-ranked finding first. Checks that found nothing are omitted. |
+| `summary.disabledChecks` | Checks turned off in the [config](/configuration), as an array of kind names. Omitted when every check ran, so its presence means the report is narrower than the catalog. |
+| `summary.excluded` | What was ruled out before any check ran: `testProjects` (an array of project names, present under `--exclude-tests`) and `ignoredFiles` (a count). Omitted entirely when nothing was excluded. |
+| `findings[].kind` | One of the [check names](/commands/perf#the-checks) — the same names used by [inline suppressions](/suppressing-findings) and by `disabledChecks`. |
+| `findings[].confidence` | `high` or `medium`. |
+| `findings[].cost` | `severe`, `high`, or `moderate` — how much runtime the pattern wastes per execution. Fixed per `kind`. |
+| `findings[].gating` | Whether this finding on its own makes the command exit `1`. Equivalent to `confidence == "high"`, spelled out so a consumer doesn't have to encode that rule. |
+| `findings[].member` | Fully-qualified name of the member the finding sits in. |
+| `findings[].project` | The containing project. Optional. |
+| `findings[].file`, `line`, `column` | Location of the finding. |
+| `findings[].loopDepth` | Loops enclosing the finding **inside its own member**, uncapped. |
+| `findings[].heat` | Estimated executions per call of that member: `10^min(loopDepth, 3)`. |
+| `findings[].score` | `cost × heat` — what `findings[]` is ordered by, descending. |
+| `findings[].detail` | One line saying what was found. |
+| `findings[].fix` | One line saying what to do about it. |
+
+<Note>
+  `roe perf` is not part of the combined run, so a bare `roe` or `roe check`
+  emits no `perf` key. Run it as its own step.
+</Note>
+
+`--sort` and `--limit` are presentation only and apply to the human report
+alone — JSON is never reordered or truncated. `--confidence high` does narrow
+the array, since it changes which findings the run reports at all.
+
+Both `loopDepth` and `heat` are present because they answer different
+questions: `heat` is capped at three levels so one pathological nest can't own
+the whole ranking, while `loopDepth` is the raw measurement a consumer that
+wants its own weighting needs. Findings arrive ranked, but `cost`, `heat`, and
+`score` are all in the document so re-ranking never means re-deriving the cost
+table from the check name.

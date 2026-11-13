@@ -1,0 +1,301 @@
+---
+title: "roe perf"
+description: "Rank costly code patterns by how often they actually run."
+icon: "gauge-high"
+"og:title": "roe perf"
+"og:description": "Rank costly code patterns by how often they actually run."
+---
+
+Finds quick performance wins: patterns that are known to waste time, ranked by
+how often each one runs. A `.Contains` on a `List<T>` costs the same wherever
+you write it — but three loops deep inside a request handler it runs a hundred
+times per call, and in `Program.Main` it runs once. `roe perf` sorts by that
+difference, so the top of the report is where the time actually goes.
+
+```bash
+roe perf [PATH]
+```
+
+```text
+src/App/Orders/OrderReportService.cs (App)
+    29:34  n+1 query         `FirstOrDefaultAsync` runs one query per `order`
+           ~10× per call · high
+           → fetch the rows for the whole collection in one query before the loop, then match them in memory
+
+    32:17  list lookup       `_blockedSkus.Contains` walks the whole collection, once per pass
+           ~10× per call · medium
+           → declare `_blockedSkus` as a HashSet<T> — membership then costs one hash lookup
+
+src/App/Billing/InvoiceService.cs (App)
+    18:16  sync-over-async   `client.GetStringAsync(url).Result` blocks the calling thread until the task finishes
+           ~1× per call · high
+           → await the task instead — under load this deadlocks or exhausts the thread pool
+
+found 3 quick wins, 2 gating — 3 project(s), 214 file(s) scanned in 88 ms
+  1 n+1 query · 1 list lookup · 1 sync-over-async
+```
+
+Each finding gets three lines: what and where, how often it runs and how sure
+roe is, and what to do about it. The fix is the reason the command exists — a
+ranked list nobody can act on is just a slower way to read the source.
+
+<Note>
+  `roe perf` is **not** part of a bare `roe` or [`roe check`](/commands/check).
+  It's a separate command you opt into, so upgrading roe can't change what an
+  existing CI gate reports.
+</Note>
+
+## Options
+
+| Option | Description |
+| --- | --- |
+| `PATH` | Path to the codebase root — a directory, `.sln` file, or `.csproj` file. Defaults to the current directory. |
+| `-f, --format <human\|json>` | Output format. Defaults to `human`; `json` emits the stable v1 schema described in [JSON output](/reference/json-output). |
+| `--confidence <all\|high>` | Which findings to report. Defaults to `all`; `high` drops the checks roe is only guessing at. Doesn't change the exit code — see [Confidence and exit codes](#confidence-and-exit-codes). |
+| `--sort <score\|path>` | Order findings by estimated wasted runtime, or by file path. Defaults to `score`. Human output only. |
+| `--limit <N>` | Print at most this many findings; `0` prints all of them. Defaults to `0`. Human output only. |
+| `--exclude-tests` | Skip test projects. Off by default. |
+| `--config <PATH>` | Use this `roe.json`/`roe.yaml`/`roe.yml` instead of [auto-discovery](/configuration). |
+
+## The checks
+
+| Check | Cost | Confidence | Flags |
+| --- | --- | --- | --- |
+| `sync-over-async` | Severe | High | `.Result`, `.Wait()`, and `.GetAwaiter().GetResult()` — blocking a thread on a task that was meant to release it. |
+| `n-plus-one-query` | Severe | High | A database call inside a loop whose arguments mention the loop variable: one round trip per row. |
+| `save-changes-in-loop` | Severe | High | `SaveChanges`/`SaveChangesAsync` inside a loop — a transaction and a round trip per pass, where one after the loop would do. |
+| `transient-http-client` | Severe | High | `new HttpClient()` outside a field initializer. Each one opens its own connection pool and strands the socket in `TIME_WAIT`. |
+| `list-lookup-in-loop` | Severe | Medium | A scanning call inside a loop on a name **declared** as a linear collection: `Contains`, `IndexOf`, `LastIndexOf`, or the *predicate* form of `Any`, `Find`, `First`, `FirstOrDefault`, `Single`, `SingleOrDefault`. Quadratic. |
+| `string-concat-in-loop` | High | High | `+=` inside a loop on a name declared `string` — a fresh copy of the whole string every pass. |
+| `blocking-sleep-in-async` | High | High | `Thread.Sleep` inside an `async` member, which holds the thread rather than releasing it. |
+| `loop-invariant-query` | High | High | A database call inside a loop that does **not** depend on the iteration, so every pass re-fetches the same rows. |
+| `await-in-loop` | High | Medium | An `await` inside a loop that no database check already covers: each pass waits for the last one to finish. |
+| `regex-per-call` | High | Medium | `new Regex("literal")` in a method body, recompiling the pattern on every call. A `static readonly Regex` field — the fix — is never flagged, and neither is a pattern built at runtime. |
+| `case-insensitive-compare` | Moderate | High | `a.ToLower() == b.ToLower()` and its `ToUpper` variants — two allocations to answer a question `string.Equals` answers in place. |
+| `redundant-linq` | Moderate | Medium | `.Count() > 0`, `.Where(p).First()`, `.OrderBy(k).First()`, `.ToList().Where(…)` — work the next operator would have done anyway. |
+| `unstable-clock` | Moderate | Medium | `DateTime.Now` / `DateTimeOffset.Now`, which converts to the local time zone on every read. Medium because the fix changes semantics, not just speed. |
+
+Generated files are excluded from every check, as are files matched by the
+config's [`ignore` globs](/configuration).
+
+### Why the database checks work without types
+
+roe never compiles the code it reads, so it has no type information. It
+doesn't need any here: Entity Framework's async method names are unambiguous.
+Nothing but a database library defines `ToListAsync`, `FirstOrDefaultAsync`,
+`SingleAsync`, `AnyAsync`, `CountAsync`, `FindAsync`, or `SaveChangesAsync`.
+Dapper (`QueryAsync`, `QueryFirstOrDefaultAsync`, `ExecuteAsync`) and raw ADO
+(`ExecuteReaderAsync`, `ExecuteScalarAsync`, `ExecuteNonQueryAsync`) add a few
+more names to the same list.
+
+The **sync** versions — `First`, `ToList`, `Any` — are ordinary LINQ over
+in-memory sequences and are deliberately never matched. A check that fired on
+those would fire on half of every codebase.
+
+What splits `n-plus-one-query` from `loop-invariant-query` is whether the call
+mentions anything from the loop, and the two fixes are opposites:
+
+```csharp
+foreach (var order in orders)
+{
+    // Mentions `order` → n-plus-one-query → batch-fetch before the loop.
+    var customer = await _database.Customers
+        .FirstOrDefaultAsync(c => c.Id == order.CustomerId);
+
+    // Mentions nothing from the loop → loop-invariant-query → hoist it out.
+    var settings = await _database.Settings.FirstOrDefaultAsync();
+}
+```
+
+### Declared types, and the silence when there isn't one
+
+`list-lookup-in-loop` and `string-concat-in-loop` read the type **as written
+in the source** — field, property, and parameter declarations, explicitly
+typed locals, and `var` bound directly to a `new`. There is no inference and
+no flow between methods.
+
+`List<T>`, `IList<T>`, `IReadOnlyList<T>`, `Collection<T>`,
+`ObservableCollection<T>`, `ImmutableList<T>`, `ImmutableArray<T>`,
+`ArrayList`, and arrays all scan. `HashSet<T>`, `Dictionary<K,V>`, `ISet<T>`,
+`IDictionary<K,V>`, and their sorted, frozen, immutable, and concurrent
+variants don't, and are never flagged.
+
+A name roe hasn't seen declared produces **no finding at all**:
+
+```csharp
+private readonly List<string> _blocked = new List<string>();
+private readonly HashSet<string> _allowed = new HashSet<string>();
+
+foreach (var sku in skus)
+{
+    _blocked.Contains(sku);   // flagged — a declared List<T> is a linear scan
+    _allowed.Contains(sku);   // silent — a HashSet<T> already hashes
+    Lookup().Contains(sku);   // silent — roe has no idea what this returns
+}
+```
+
+That silence is the point. These two checks are the ones most likely to be
+wrong, and staying quiet when roe can't tell is what keeps them worth reading.
+`IEnumerable<T>` is treated as unknown for the same reason: LINQ's `Contains`
+forwards to `ICollection<T>.Contains` when the runtime value implements it, so
+an `IEnumerable<T>` holding a `HashSet<T>` isn't a linear scan and roe can't
+see which it's holding.
+
+## How findings are ranked
+
+Every finding carries three separate numbers. Keeping them apart is what makes
+the ranking honest.
+
+**Cost** is how much runtime the pattern wastes each time it executes. It's
+fixed per check: `Severe` (100), `High` (10), or `Moderate` (3).
+
+**Heat** is how often it runs — `10^depth`, where depth is the number of loops
+around it inside its own method:
+
+| Loops around it | Heat | Printed as |
+| --- | --- | --- |
+| none | 1 | `~1× per call` |
+| one | 10 | `~10× per call` |
+| two | 100 | `~100× per call` |
+| three or more | 1000 | `~1000× per call` |
+
+Depth is capped at three. One pathological five-deep nest would otherwise score
+100,000× and own every slot in the report, which is the failure mode this
+command exists to avoid.
+
+**Score** is `cost × heat`, and that's the sort order. A moderate finding two
+loops deep (3 × 100 = 300) outranks a severe one that runs once (100 × 1 =
+100), which is the whole argument for ranking rather than listing.
+
+<Note>
+  A lambda passed to a per-element LINQ operator — `.Select(x => …)`,
+  `.Where(…)`, `.Sum(…)`, `.OrderBy(…)` — counts as a loop level. It *is* a
+  loop, and a linear scan inside one is just as quadratic as it would be inside
+  a `foreach`. A lambda passed to anything else (`Task.Run`, an event handler,
+  a DI registration) runs an unknown number of times and isn't counted.
+</Note>
+
+`--sort path` groups a file's findings together instead, which is stable
+regardless of the scores and is the better choice when diffing two runs. The
+breakdown line in the footer always stays in ranked order.
+
+<Note>
+  Heat counts loops **within one method**. A method that's cheap on its own but
+  called from inside three loops elsewhere is not yet ranked as hot — that
+  needs heat to propagate across calls, which is a later release.
+</Note>
+
+## Confidence and exit codes
+
+Confidence is how sure roe is that a finding is real, and it decides the exit
+code and nothing else:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Clean, **or** only medium-confidence findings were reported. |
+| `1` | At least one high-confidence finding. |
+| `2` | Error — a message is printed to stderr as `error: …`. |
+
+A `.Result` is a `.Result`; there's nothing to argue about, so it fails the
+build. A `List<T>.Contains` in a loop is roe reading a declaration and drawing
+a conclusion — worth your attention, but not worth blocking a merge over. The
+footer says which is which, and explains a passing run that still found
+things:
+
+```text
+found 3 quick wins, none gating — 1 project(s), 118 file(s) scanned in 42 ms
+  1 list lookup · 1 regex per call · 1 unstable clock
+  exit 0 — only high-confidence findings fail a build
+```
+
+Confidence deliberately stays out of the ranking. A medium-confidence finding
+running 1000× per call is still the most valuable thing in the report, and
+burying it under a certain-but-cold one would defeat the point of ranking at
+all.
+
+`--confidence high` narrows what's **reported** — in both human and JSON
+output — without changing the exit code, since only high-confidence findings
+ever gate. It's the flag to reach for when adopting roe on a codebase that
+already has a backlog.
+
+```yaml
+- name: Check for performance regressions
+  run: roe perf --confidence high
+```
+
+## Turning checks off
+
+Any check can be disabled by name in a [config file](/configuration):
+
+```json roe.json
+{
+  "perf": {
+    "excludeTests": true,
+    "disabledChecks": ["unstable-clock", "redundant-linq"]
+  }
+}
+```
+
+A name that isn't a check is a warning, not a silent no-op — believing a check
+is off while it's still failing your build is a worse outcome than a noisy
+startup:
+
+```text
+warning: unknown check "list-lookups" in the perf config's disabledChecks — valid checks are: await-in-loop, blocking-sleep-in-async, …
+```
+
+Disabled checks are named in the footer and in `--format json`, so "clean"
+and "not looked for" never read the same:
+
+```text
+  disabled: redundant-linq, unstable-clock
+```
+
+## Suppressing findings
+
+Individual findings take [inline suppression
+comments](/suppressing-findings), using the check names from the table above:
+
+```csharp
+// roe-ignore-next-line unstable-clock
+var startedAt = DateTime.Now;
+```
+
+Unlike `unused-file` and `large-file`, no perf check is file-wide: every
+finding sits on a real line, so a marker only ever covers the line it names.
+
+## What "scanned" counts
+
+The footer's `N project(s), N file(s) scanned` counts what was *eligible to be
+reported*, not what was parsed. Test projects under `--exclude-tests` and files
+matched by the config's [`ignore` globs](/configuration) are subtracted, and
+named on a line of their own:
+
+```text
+  excluded: 1 test project (Lib.Tests), 4 ignored files
+```
+
+The line only appears when something was actually excluded, so its presence is
+the confirmation that a setting took effect — which matters most when the
+setting came from a config file, where there's no command line to eyeball.
+
+Generated files are never reported as an exclusion: they aren't eligible under
+any setting, so there's no setting for a reader to confirm.
+
+## What roe perf can't see
+
+Without type information some real performance problems are out of reach
+entirely. The most commonly asked-about one is lazy loading:
+
+```csharp
+foreach (var order in orders)
+{
+    total += order.Lines.Sum(line => line.Amount);   // a query per order
+}
+```
+
+That's an N+1 with no method name to match on — `Lines` is a navigation
+property, and whether touching it hits the database depends on the EF
+configuration roe never sees. Boxing, `Span<T>` opportunities, missing
+`AsNoTracking`, collection capacity hints, and `ConfigureAwait` are out of
+reach for the same reason. See [Known limitations](/limitations).

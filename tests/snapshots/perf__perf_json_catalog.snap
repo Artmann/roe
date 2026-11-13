@@ -1,0 +1,295 @@
+---
+source: tests/perf.rs
+expression: stdout
+---
+{
+  "version": 1,
+  "root": "<repo>/tests/fixtures/perf_catalog",
+  "summary": {
+    "projects": 1,
+    "filesScanned": 3,
+    "findings": 14,
+    "gating": 8,
+    "counts": [
+      {
+        "kind": "n-plus-one-query",
+        "count": 1
+      },
+      {
+        "kind": "list-lookup-in-loop",
+        "count": 1
+      },
+      {
+        "kind": "save-changes-in-loop",
+        "count": 1
+      },
+      {
+        "kind": "transient-http-client",
+        "count": 1
+      },
+      {
+        "kind": "sync-over-async",
+        "count": 1
+      },
+      {
+        "kind": "loop-invariant-query",
+        "count": 1
+      },
+      {
+        "kind": "string-concat-in-loop",
+        "count": 1
+      },
+      {
+        "kind": "await-in-loop",
+        "count": 1
+      },
+      {
+        "kind": "unstable-clock",
+        "count": 1
+      },
+      {
+        "kind": "blocking-sleep-in-async",
+        "count": 1
+      },
+      {
+        "kind": "regex-per-call",
+        "count": 1
+      },
+      {
+        "kind": "case-insensitive-compare",
+        "count": 1
+      },
+      {
+        "kind": "redundant-linq",
+        "count": 2
+      }
+    ],
+    "elapsedMs": 0
+  },
+  "findings": [
+    {
+      "kind": "n-plus-one-query",
+      "confidence": "high",
+      "cost": "severe",
+      "gating": true,
+      "member": "App.OrderReportService.BuildAsync",
+      "project": "App",
+      "file": "App/OrderReportService.cs",
+      "line": 29,
+      "column": 34,
+      "loopDepth": 1,
+      "heat": 10.0,
+      "score": 1000.0,
+      "detail": "`FirstOrDefaultAsync` runs one query per `order`",
+      "fix": "fetch the rows for the whole collection in one query before the loop, then match them in memory"
+    },
+    {
+      "kind": "list-lookup-in-loop",
+      "confidence": "medium",
+      "cost": "severe",
+      "gating": false,
+      "member": "App.OrderReportService.BuildAsync",
+      "project": "App",
+      "file": "App/OrderReportService.cs",
+      "line": 32,
+      "column": 17,
+      "loopDepth": 1,
+      "heat": 10.0,
+      "score": 1000.0,
+      "detail": "`_blockedSkus.Contains` walks the whole collection, once per pass",
+      "fix": "declare `_blockedSkus` as a HashSet<T> — membership then costs one hash lookup"
+    },
+    {
+      "kind": "save-changes-in-loop",
+      "confidence": "high",
+      "cost": "severe",
+      "gating": true,
+      "member": "App.OrderReportService.BuildAsync",
+      "project": "App",
+      "file": "App/OrderReportService.cs",
+      "line": 44,
+      "column": 19,
+      "loopDepth": 1,
+      "heat": 10.0,
+      "score": 1000.0,
+      "detail": "`SaveChangesAsync` runs a round trip and a transaction on every pass",
+      "fix": "make every change first and call SaveChangesAsync once after the loop — EF batches the writes into one round trip"
+    },
+    {
+      "kind": "transient-http-client",
+      "confidence": "high",
+      "cost": "severe",
+      "gating": true,
+      "member": "App.HttpHelpers.Fetch",
+      "project": "App",
+      "file": "App/HttpHelpers.cs",
+      "line": 16,
+      "column": 22,
+      "loopDepth": 0,
+      "heat": 1.0,
+      "score": 100.0,
+      "detail": "`new HttpClient()` opens its own connection pool and leaves the socket in TIME_WAIT after disposal",
+      "fix": "inject IHttpClientFactory and call CreateClient(), or hold one static client"
+    },
+    {
+      "kind": "sync-over-async",
+      "confidence": "high",
+      "cost": "severe",
+      "gating": true,
+      "member": "App.HttpHelpers.Fetch",
+      "project": "App",
+      "file": "App/HttpHelpers.cs",
+      "line": 18,
+      "column": 16,
+      "loopDepth": 0,
+      "heat": 1.0,
+      "score": 100.0,
+      "detail": "`client.GetStringAsync(url).Result` blocks the calling thread until the task finishes",
+      "fix": "await the task instead — under load this deadlocks or exhausts the thread pool"
+    },
+    {
+      "kind": "loop-invariant-query",
+      "confidence": "high",
+      "cost": "high",
+      "gating": true,
+      "member": "App.OrderReportService.BuildAsync",
+      "project": "App",
+      "file": "App/OrderReportService.cs",
+      "line": 30,
+      "column": 34,
+      "loopDepth": 1,
+      "heat": 10.0,
+      "score": 100.0,
+      "detail": "`FirstOrDefaultAsync` runs every pass but does not depend on the iteration",
+      "fix": "hoist the query above the loop and reuse the result"
+    },
+    {
+      "kind": "string-concat-in-loop",
+      "confidence": "high",
+      "cost": "high",
+      "gating": true,
+      "member": "App.OrderReportService.BuildAsync",
+      "project": "App",
+      "file": "App/OrderReportService.cs",
+      "line": 39,
+      "column": 17,
+      "loopDepth": 1,
+      "heat": 10.0,
+      "score": 100.0,
+      "detail": "`report += …` allocates a fresh copy of the whole string each pass",
+      "fix": "accumulate into a StringBuilder and call ToString() once after the loop"
+    },
+    {
+      "kind": "await-in-loop",
+      "confidence": "medium",
+      "cost": "high",
+      "gating": false,
+      "member": "App.OrderReportService.BuildAsync",
+      "project": "App",
+      "file": "App/OrderReportService.cs",
+      "line": 45,
+      "column": 13,
+      "loopDepth": 1,
+      "heat": 10.0,
+      "score": 100.0,
+      "detail": "each pass waits for the previous one to finish before starting",
+      "fix": "if the iterations are independent, start them all and await Task.WhenAll(…)"
+    },
+    {
+      "kind": "unstable-clock",
+      "confidence": "medium",
+      "cost": "moderate",
+      "gating": false,
+      "member": "App.OrderReportService.BuildAsync",
+      "project": "App",
+      "file": "App/OrderReportService.cs",
+      "line": 42,
+      "column": 33,
+      "loopDepth": 1,
+      "heat": 10.0,
+      "score": 30.0,
+      "detail": "`DateTime.Now` converts to the local time zone on every read",
+      "fix": "use DateTime.UtcNow if the value is stored or compared, not displayed"
+    },
+    {
+      "kind": "blocking-sleep-in-async",
+      "confidence": "high",
+      "cost": "high",
+      "gating": true,
+      "member": "App.HttpHelpers.WarmUpAsync",
+      "project": "App",
+      "file": "App/HttpHelpers.cs",
+      "line": 23,
+      "column": 9,
+      "loopDepth": 0,
+      "heat": 1.0,
+      "score": 10.0,
+      "detail": "`Thread.Sleep` holds the thread instead of releasing it",
+      "fix": "await Task.Delay(…) instead — it frees the thread for other work while it waits"
+    },
+    {
+      "kind": "regex-per-call",
+      "confidence": "medium",
+      "cost": "high",
+      "gating": false,
+      "member": "App.HttpHelpers.Matches",
+      "project": "App",
+      "file": "App/HttpHelpers.cs",
+      "line": 30,
+      "column": 23,
+      "loopDepth": 0,
+      "heat": 1.0,
+      "score": 10.0,
+      "detail": "`new Regex(…)` recompiles the pattern on every call",
+      "fix": "hoist it to a static readonly field, or use a [GeneratedRegex] partial method"
+    },
+    {
+      "kind": "case-insensitive-compare",
+      "confidence": "high",
+      "cost": "moderate",
+      "gating": true,
+      "member": "App.HttpHelpers.Matches",
+      "project": "App",
+      "file": "App/HttpHelpers.cs",
+      "line": 32,
+      "column": 42,
+      "loopDepth": 0,
+      "heat": 1.0,
+      "score": 3.0,
+      "detail": "folding `value` allocates a second string just to compare it",
+      "fix": "use string.Equals(a, b, StringComparison.OrdinalIgnoreCase) — it compares in place"
+    },
+    {
+      "kind": "redundant-linq",
+      "confidence": "medium",
+      "cost": "moderate",
+      "gating": false,
+      "member": "App.HttpHelpers.HasAny",
+      "project": "App",
+      "file": "App/HttpHelpers.cs",
+      "line": 37,
+      "column": 16,
+      "loopDepth": 0,
+      "heat": 1.0,
+      "score": 3.0,
+      "detail": "`.Count() > 0` walks the whole sequence to answer a yes-or-no question",
+      "fix": "use Any() — it stops at the first element"
+    },
+    {
+      "kind": "redundant-linq",
+      "confidence": "medium",
+      "cost": "moderate",
+      "gating": false,
+      "member": "App.HttpHelpers.FirstNonEmpty",
+      "project": "App",
+      "file": "App/HttpHelpers.cs",
+      "line": 42,
+      "column": 16,
+      "loopDepth": 0,
+      "heat": 1.0,
+      "score": 3.0,
+      "detail": "`.Where(…).First()` builds an intermediate sequence",
+      "fix": "pass the predicate straight to First(…)"
+    }
+  ]
+}

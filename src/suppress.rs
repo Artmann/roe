@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use rustc_hash::FxHashMap;
 
 use crate::config::build_ignore_globset;
 use crate::model::{
-    AnalysisResult, Finding, FindingKind, HealthFindingKind, HealthResult, Summary, Workspace,
+    AnalysisResult, Finding, FindingKind, HealthFindingKind, HealthResult, PerfFindingKind,
+    PerfResult, Summary, Workspace,
 };
 
 /// A rule namespace the inline markers can target. Each command has its own
@@ -66,6 +68,26 @@ impl SuppressibleKind for HealthFindingKind {
     }
 }
 
+impl SuppressibleKind for PerfFindingKind {
+    fn from_rule_name(token: &str) -> Option<Self> {
+        PerfFindingKind::from_slug(token)
+    }
+
+    /// Every perf finding points at a real expression, so there is always a
+    /// line a marker can sit next to.
+    fn is_file_wide(self) -> bool {
+        false
+    }
+
+    /// Built once from the catalog rather than written out, so a new check
+    /// cannot be left out of the warning that tells users it exists.
+    fn rule_names() -> &'static str {
+        static NAMES: OnceLock<String> = OnceLock::new();
+
+        NAMES.get_or_init(PerfFindingKind::slug_list)
+    }
+}
+
 /// eslint-style inline suppression, always applied (no config needed).
 /// Re-reads each unique finding's source file once and looks for
 /// `// roe-ignore-line [rule[,rule...]]` (suppresses a finding on the same
@@ -91,6 +113,19 @@ pub fn apply_inline_suppressions(result: &mut AnalysisResult, workspace: &mut Wo
 /// `dupes` command makes for the same reason.
 pub fn apply_inline_suppressions_health(result: &mut HealthResult, workspace: &mut Workspace) {
     let mut cache: SuppressionCache<HealthFindingKind> = SuppressionCache::default();
+    result
+        .findings
+        .retain(|finding| !cache.suppresses(&finding.file, finding.line, finding.kind, workspace));
+}
+
+/// The same markers, applied to `roe perf`. The rule names are the check slugs
+/// the JSON report uses, so `// roe-ignore-line list-lookup-in-loop` reads the
+/// same way the config's `disabledChecks` does.
+///
+/// Run before the summary is built, so a suppressed finding is absent from the
+/// counts rather than counted and then hidden.
+pub fn apply_inline_suppressions_perf(result: &mut PerfResult, workspace: &mut Workspace) {
+    let mut cache: SuppressionCache<PerfFindingKind> = SuppressionCache::default();
     result
         .findings
         .retain(|finding| !cache.suppresses(&finding.file, finding.line, finding.kind, workspace));
@@ -410,6 +445,43 @@ mod tests {
             );
             assert!(warnings.is_empty(), "'{rule}' should be a known rule");
         }
+    }
+
+    #[test]
+    fn every_perf_check_slug_is_a_suppression_rule_name() {
+        // The slug is one name with three jobs — JSON, `disabledChecks`, and
+        // this marker — so a check that cannot be suppressed by its own name
+        // is a bug in one of them.
+        for kind in PerfFindingKind::ALL {
+            let mut warnings = Vec::new();
+            let suppressions: FileSuppressions<PerfFindingKind> = parse_suppressions(
+                &format!("// roe-ignore-next-line {}\nvar x = 1;\n", kind.slug()),
+                Path::new("x.cs"),
+                &mut warnings,
+            );
+
+            assert!(
+                suppressions.suppresses(2, kind),
+                "'{}' should suppress itself",
+                kind.slug()
+            );
+            assert!(warnings.is_empty(), "'{}' should be known", kind.slug());
+        }
+    }
+
+    #[test]
+    fn a_perf_marker_never_reaches_beyond_its_own_line() {
+        // No perf finding is pinned at a synthetic line, so nothing here may
+        // behave the way `unused-file` and `large-file` do.
+        let mut warnings = Vec::new();
+        let suppressions: FileSuppressions<PerfFindingKind> = parse_suppressions(
+            "// roe-ignore-line\nvar x = 1;\n",
+            Path::new("x.cs"),
+            &mut warnings,
+        );
+
+        assert!(suppressions.suppresses(1, PerfFindingKind::SyncOverAsync));
+        assert!(!suppressions.suppresses(2, PerfFindingKind::SyncOverAsync));
     }
 
     #[test]
