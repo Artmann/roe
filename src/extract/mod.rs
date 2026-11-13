@@ -123,6 +123,9 @@ pub struct FileFacts {
     pub layout_types: Vec<Spur>,
     /// Total line count of the file, from the parse tree's end position.
     pub line_count: u32,
+    /// Costly patterns found by the `perf` catalog. Always empty unless the
+    /// caller asked for [`PerfPass::Run`].
+    pub perf: Vec<crate::perf::RawFinding>,
 }
 
 impl FileFacts {
@@ -138,8 +141,20 @@ impl FileFacts {
             is_generated,
             layout_types: Vec::new(),
             line_count: 0,
+            perf: Vec::new(),
         }
     }
+}
+
+/// Whether to run the `perf` catalog's second descent over each tree.
+///
+/// It happens while the tree is still alive, so it costs no re-parse — but it
+/// is still a full walk, and `dead-code` and `dupes` have no use for the
+/// result.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum PerfPass {
+    Run,
+    Skip,
 }
 
 pub(crate) fn make_parser() -> tree_sitter::Parser {
@@ -152,11 +167,11 @@ pub(crate) fn make_parser() -> tree_sitter::Parser {
 
 /// Parse and extract every file in parallel. One parser per rayon worker
 /// (tree-sitter parsers are Send but not Sync).
-pub fn extract_all(files: &[SourceFile], rodeo: &Interner) -> Vec<FileFacts> {
+pub fn extract_all(files: &[SourceFile], rodeo: &Interner, perf: PerfPass) -> Vec<FileFacts> {
     files
         .par_iter()
         .map_init(make_parser, |parser, file| {
-            extract_file(parser, file, rodeo)
+            extract_file(parser, file, rodeo, perf)
         })
         .collect()
 }
@@ -165,6 +180,7 @@ fn extract_file(
     parser: &mut tree_sitter::Parser,
     file: &SourceFile,
     rodeo: &Interner,
+    perf: PerfPass,
 ) -> FileFacts {
     let Ok(source) = std::fs::read(&file.path) else {
         let mut facts = FileFacts::empty(file.id, file.is_generated);
@@ -182,6 +198,13 @@ fn extract_file(
 
     let mut facts = walk::extract(file.id, &source, tree.root_node(), rodeo);
     facts.is_generated = is_generated;
+
+    // A second descent over the tree the first pass just used, before it goes
+    // out of scope at the end of this function.
+    if perf == PerfPass::Run && !is_generated {
+        facts.perf = crate::perf::scan(tree.root_node(), &source);
+    }
+
     facts
 }
 

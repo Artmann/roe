@@ -25,7 +25,8 @@
           "commands/check",
           "commands/dead-code",
           "commands/dupes",
-          "commands/health"
+          "commands/health",
+          "commands/perf"
         ]
       },
       {

@@ -31,6 +31,22 @@ distinct warning once, not once per analysis.
   check useless as a gate.
 </Note>
 
+[`roe perf`](/commands/perf) is the one command that doesn't follow the table
+above. Its findings carry a confidence, and only the high-confidence ones
+gate:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Clean, **or** only medium-confidence findings were reported. |
+| `1` | At least one high-confidence finding. |
+| `2` | Error. |
+
+So a `roe perf` run can print a page of advice and still pass. The footer says
+so explicitly — `exit 0 — only high-confidence findings fail a build` — and
+`summary.gating` in [JSON output](/reference/json-output) is the count that
+decided it. `--confidence high` narrows what's reported without changing the
+exit code, since only high-confidence findings ever gate.
+
 A run under a [baseline](/commands/health#baselines) exits `0` when every
 finding it made was already recorded — that's what the baseline is for — and
 `1` as soon as one isn't. `--write-baseline` always exits `0`: it records the

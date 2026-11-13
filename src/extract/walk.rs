@@ -26,6 +26,7 @@ pub fn extract(file: FileId, source: &[u8], root: Node, rodeo: &Interner) -> Fil
             is_generated: false,
             layout_types: Vec::new(),
             line_count: root.end_position().row as u32 + 1,
+            perf: Vec::new(),
         },
         namespace_stack: Vec::new(),
         decl_stack: Vec::new(),

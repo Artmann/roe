@@ -48,6 +48,11 @@ error.
     "excludeTests": true,
     "baseline": "roe-baseline.json",
     "ignore": ["**/GeneratedModels.cs"]
+  },
+  "perf": {
+    "excludeTests": true,
+    "disabledChecks": ["unstable-clock", "redundant-linq"],
+    "ignore": ["Scripts/**"]
   }
 }
 ```
@@ -58,10 +63,11 @@ error.
 | `roots` | string[] | Fully-qualified symbol names to treat as extra entry-point roots. Default for `--root`. |
 | `entryPoints` | string[] | Glob patterns naming files to treat as entry points: every declaration in a matching file is a root, so the file and everything it references count as used. |
 | `libraryProjects` | string[] | Project names to always treat in library mode (public API counts as used). Default for `--library`. |
-| `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to all three commands; each command's section can add its own. |
+| `ignore` | string[] | Glob patterns; every finding in a matching file is dropped. Applies to every command; each command's section can add its own. |
 | `deadCode` | object | Extra `ignore` globs applied only to [`roe dead-code`](/commands/dead-code). |
 | `dupes` | object | Matching mode, thresholds, and extra `ignore` globs for [`roe dupes`](/commands/dupes). Every key is optional. |
 | `health` | object | Thresholds, the baseline path, and extra `ignore` globs for [`roe health`](/commands/health). Every key is optional. |
+| `perf` | object | Disabled checks, `excludeTests`, and extra `ignore` globs for [`roe perf`](/commands/perf). Every key is optional. |
 
 Unknown fields are rejected, so a typo fails loudly instead of being
 silently ignored.
@@ -136,6 +142,31 @@ rules as `ignore` globs — a trailing `/` matches the whole directory, and
 `..` is unsupported. A pattern that matches no file at all is reported as a
 note in the output, so a stale path can't silently drop the protection it
 promised.
+## Perf settings
+
+| Field | Type | Flag | Default |
+| --- | --- | --- | --- |
+| `excludeTests` | boolean | `--exclude-tests` | `false` |
+| `disabledChecks` | string[] | none | every check enabled |
+| `ignore` | string[] | none | none — unioned with the top-level `ignore` list |
+
+`disabledChecks` is the per-check off switch, naming
+[checks](/commands/perf#the-checks) by the same kebab-case name that appears in
+JSON output and inline suppressions. There's no flag for it: turning a check
+off is a decision about the codebase, so it belongs in a file the whole team
+shares rather than in one person's shell history.
+
+A name that isn't a check is a warning, not a silent no-op — believing a check
+is off while it's still failing your build is a worse outcome than a noisy
+startup:
+
+```text
+warning: unknown check "list-lookups" in the perf config's disabledChecks — valid checks are: await-in-loop, blocking-sleep-in-async, …
+```
+
+The run continues with that check still enabled. Whatever is disabled is named
+in the `roe perf` footer and in `--format json`, so "clean" and "not looked
+for" never read the same.
 
 ## Ignore globs
 
@@ -143,7 +174,7 @@ promised.
 A trailing `/` matches the whole directory, so `"Generated/"` needs no `**`.
 Patterns containing `..` are unsupported and produce a warning.
 
-The top-level `ignore` list applies to all three commands — including
+The top-level `ignore` list applies to every command — including
 `roe dupes` and `roe health`'s circular dependencies, which span multiple
 files and don't map cleanly onto a single-line
 [inline suppression comment](/suppressing-findings).
@@ -188,7 +219,7 @@ merging with it.
 Health thresholds work the same way, per field: `--max-complexity 12`
 overrides `"maxComplexity"` for that run, while every threshold you don't
 pass still comes from the config. Like `--aggressive`, `--exclude-tests` can
-only turn the setting on.
+only turn the setting on — which is true of `perf`'s `excludeTests` too.
 
 Dupes settings follow the same per-field order: `--min-tokens 100` overrides
 `"minTokens"` for that run, and the rest still come from the config. `--mode`
@@ -200,6 +231,6 @@ a CLI flag, and a command's own `ignore` list is unioned with the top-level
 one rather than replacing it.
 
 To confirm a config-only `excludeTests` or `ignore` actually applied, read the
-`roe health` footer: the scanned counts narrow by whatever was excluded, and
-an `excluded:` line names it. See
+`roe health` or `roe perf` footer: the scanned counts narrow by whatever was
+excluded, and an `excluded:` line names it. See
 [What "scanned" counts](/commands/health#what-scanned-counts).

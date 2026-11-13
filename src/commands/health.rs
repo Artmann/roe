@@ -7,11 +7,11 @@ use globset::GlobSet;
 use rustc_hash::FxHashMap;
 
 use crate::cli::HealthArgs;
-use crate::commands::Context;
+use crate::commands::{Context, in_test_project, member_names, project_name};
 use crate::config::EffectiveHealth;
 use crate::model::{
     CircularDependency, CycleMember, HealthFinding, HealthFindingKind, HealthResult, HealthSummary,
-    Hotspot, MemberBreakdown, MemberKind, ProjectId, SymbolId, SymbolKind, Workspace,
+    Hotspot, MemberBreakdown, SymbolId, SymbolKind, Workspace,
 };
 use crate::resolve::{Resolution, SymbolFlags};
 use crate::{
@@ -267,10 +267,6 @@ fn collect_hotspots(
     ))
 }
 
-fn in_test_project(workspace: &Workspace, project: Option<ProjectId>) -> bool {
-    project.is_some_and(|id| workspace.projects[id.index()].is_test())
-}
-
 /// Member-level (complexity, method length, parameter count), file-level
 /// (line count), and type-level (member count, cycles) findings.
 /// Generated declarations are skipped throughout — they're the generator's
@@ -488,77 +484,6 @@ fn collect_findings(
     (findings, cycles)
 }
 
-/// Display names for every declaration in one file, indexed by local decl
-/// index (non-members get an empty placeholder that nothing reads).
-///
-/// Overloads merge into a single symbol — `build_symbols` keys members on
-/// (type, name, kind) — so `display_name` returns the same string for
-/// `TryBeginActivation(Unit)` and `TryBeginActivation(Unit, Order)`, and a
-/// report listing both is two identical rows. Where that collision actually
-/// happens, the name gets a Roslyn-style `/arity` suffix. Where it doesn't,
-/// nothing is appended: an arity on a name with no overloads is noise.
-fn member_names(
-    resolution: &Resolution,
-    file_facts: &extract::FileFacts,
-    local_map: &[SymbolId],
-    rodeo: &Interner,
-) -> Vec<String> {
-    let mut names: Vec<String> = Vec::with_capacity(file_facts.decls.len());
-
-    for (local_index, decl) in file_facts.decls.iter().enumerate() {
-        if decl.kind.is_member() {
-            names.push(resolution.display_name(local_map[local_index], rodeo));
-        } else {
-            names.push(String::new());
-        }
-    }
-
-    let mut occurrences: FxHashMap<&str, u32> = FxHashMap::default();
-    for (name, decl) in names.iter().zip(&file_facts.decls) {
-        if takes_parameters(decl.kind) {
-            *occurrences.entry(name.as_str()).or_default() += 1;
-        }
-    }
-
-    let ambiguous: Vec<bool> = names
-        .iter()
-        .zip(&file_facts.decls)
-        .map(|(name, decl)| {
-            takes_parameters(decl.kind) && occurrences.get(name.as_str()).is_some_and(|&n| n > 1)
-        })
-        .collect();
-
-    for (local_index, is_ambiguous) in ambiguous.into_iter().enumerate() {
-        if is_ambiguous {
-            // The declared total, not the required count — the suffix exists
-            // to tell overloads apart, so it has to match the signature the
-            // reader will find in the source.
-            names[local_index].push_str(&format!(
-                "/{}",
-                file_facts.decls[local_index].parameters.total()
-            ));
-        }
-    }
-
-    names
-}
-
-/// Whether an arity suffix means anything for this kind. Fields and
-/// properties have no parameter list, so `Foo/0` would be a lie dressed as
-/// precision.
-fn takes_parameters(kind: SymbolKind) -> bool {
-    matches!(
-        kind,
-        SymbolKind::Member(
-            MemberKind::Method
-                | MemberKind::Constructor
-                | MemberKind::Indexer
-                | MemberKind::Operator
-                | MemberKind::ConversionOperator
-        )
-    )
-}
-
 fn cycle_member(
     resolution: &Resolution,
     workspace: &Workspace,
@@ -575,10 +500,6 @@ fn cycle_member(
         line: symbol.line,
         column: symbol.column,
     }
-}
-
-fn project_name(workspace: &Workspace, project: Option<ProjectId>) -> Option<String> {
-    project.map(|id| workspace.projects[id.index()].name.clone())
 }
 
 /// The scan totals count what was *eligible to be reported*, not what was

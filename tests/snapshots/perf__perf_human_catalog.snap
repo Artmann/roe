@@ -1,0 +1,66 @@
+---
+source: tests/perf.rs
+expression: normalize(&output.stdout)
+---
+App/OrderReportService.cs (App)
+    29:34  n+1 query         `FirstOrDefaultAsync` runs one query per `order`
+           ~10× per call · high
+           → fetch the rows for the whole collection in one query before the loop, then match them in memory
+
+    32:17  list lookup       `_blockedSkus.Contains` walks the whole collection, once per pass
+           ~10× per call · medium
+           → declare `_blockedSkus` as a HashSet<T> — membership then costs one hash lookup
+
+    44:19  save in loop      `SaveChangesAsync` runs a round trip and a transaction on every pass
+           ~10× per call · high
+           → make every change first and call SaveChangesAsync once after the loop — EF batches the writes into one round trip
+
+App/HttpHelpers.cs (App)
+    16:22  transient client  `new HttpClient()` opens its own connection pool and leaves the socket in TIME_WAIT after disposal
+           ~1× per call · high
+           → inject IHttpClientFactory and call CreateClient(), or hold one static client
+
+    18:16  sync-over-async   `client.GetStringAsync(url).Result` blocks the calling thread until the task finishes
+           ~1× per call · high
+           → await the task instead — under load this deadlocks or exhausts the thread pool
+
+App/OrderReportService.cs (App)
+    30:34  repeated query    `FirstOrDefaultAsync` runs every pass but does not depend on the iteration
+           ~10× per call · high
+           → hoist the query above the loop and reuse the result
+
+    39:17  string concat     `report += …` allocates a fresh copy of the whole string each pass
+           ~10× per call · high
+           → accumulate into a StringBuilder and call ToString() once after the loop
+
+    45:13  await in loop     each pass waits for the previous one to finish before starting
+           ~10× per call · medium
+           → if the iterations are independent, start them all and await Task.WhenAll(…)
+
+    42:33  unstable clock    `DateTime.Now` converts to the local time zone on every read
+           ~10× per call · medium
+           → use DateTime.UtcNow if the value is stored or compared, not displayed
+
+App/HttpHelpers.cs (App)
+     23:9  blocking sleep    `Thread.Sleep` holds the thread instead of releasing it
+           ~1× per call · high
+           → await Task.Delay(…) instead — it frees the thread for other work while it waits
+
+    30:23  regex per call    `new Regex(…)` recompiles the pattern on every call
+           ~1× per call · medium
+           → hoist it to a static readonly field, or use a [GeneratedRegex] partial method
+
+    32:42  case compare      folding `value` allocates a second string just to compare it
+           ~1× per call · high
+           → use string.Equals(a, b, StringComparison.OrdinalIgnoreCase) — it compares in place
+
+    37:16  redundant linq    `.Count() > 0` walks the whole sequence to answer a yes-or-no question
+           ~1× per call · medium
+           → use Any() — it stops at the first element
+
+    42:16  redundant linq    `.Where(…).First()` builds an intermediate sequence
+           ~1× per call · medium
+           → pass the predicate straight to First(…)
+
+found 14 quick wins, 8 gating — 1 project(s), 3 file(s) scanned in <n> ms
+  1 n+1 query · 1 list lookup · 1 save in loop · 1 transient client · 1 sync-over-async · 1 repeated query · 1 string concat · 1 await in loop · 1 unstable clock · 1 blocking sleep · 1 regex per call · 1 case compare · 2 redundant linq

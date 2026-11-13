@@ -5,6 +5,7 @@ use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
 use crate::cli::DupeMode;
+use crate::model::PerfFindingKind;
 
 /// User-authored suppression/override settings, loaded from `roe.json`,
 /// `roe.yaml`, or `roe.yml`.
@@ -38,6 +39,9 @@ pub struct RoeConfig {
     /// Defaults for `roe health`'s thresholds, so a CI invocation doesn't have
     /// to repeat six flags.
     pub health: Option<HealthConfig>,
+    /// Defaults for `roe perf`, including the per-check off switch every
+    /// linter eventually needs.
+    pub perf: Option<PerfConfig>,
 }
 
 /// The `deadCode` block of a config file.
@@ -81,6 +85,20 @@ pub struct DupesConfig {
     pub min_occurrences: Option<u32>,
     pub min_tokens: Option<u32>,
     pub mode: Option<DupeMode>,
+}
+
+/// The `perf` block of a config file. Every field is optional; an absent one
+/// falls back to the built-in default.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PerfConfig {
+    /// Check slugs to turn off entirely, as they appear in the JSON report —
+    /// `"list-lookup-in-loop"`, `"unstable-clock"`, and so on.
+    pub disabled_checks: Option<Vec<String>>,
+    pub exclude_tests: Option<bool>,
+    /// Extra ignore globs applied only to `roe perf`, unioned with the
+    /// top-level `ignore` list and resolved with the same rules.
+    pub ignore: Option<Vec<String>>,
 }
 
 pub struct ResolvedConfig {
@@ -396,6 +414,59 @@ pub struct HealthOverrides {
     pub max_file_lines: Option<u32>,
     pub max_type_members: Option<u32>,
     pub exclude_tests: bool,
+}
+
+/// `roe perf` settings after applying default → config file → CLI flag
+/// precedence.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EffectivePerf {
+    pub exclude_tests: bool,
+    /// Checks to skip entirely, sorted and de-duplicated. Names that matched
+    /// no check are dropped here and warned about by [`merge_perf`].
+    pub disabled_checks: Vec<PerfFindingKind>,
+}
+
+/// The subset of `PerfArgs` that participates in config merging.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerfOverrides {
+    pub exclude_tests: bool,
+}
+
+/// `exclude_tests` is OR'd rather than overridden, for the same reason
+/// `aggressive` is: clap's plain bool flag can only ever be `true`, so there
+/// is no `--no-exclude-tests` to override a config's `true` back to `false`.
+///
+/// A `disabledChecks` entry naming no known check is the one thing here that
+/// can be silently wrong — the user believes a check is off, and it is still
+/// running — so it warns and names every slug that would have worked.
+pub fn merge_perf(
+    config: Option<&PerfConfig>,
+    cli: PerfOverrides,
+    warnings: &mut Vec<String>,
+) -> EffectivePerf {
+    let mut disabled_checks = Vec::new();
+
+    for name in config
+        .and_then(|perf| perf.disabled_checks.as_deref())
+        .unwrap_or_default()
+    {
+        match PerfFindingKind::from_slug(name) {
+            Some(kind) => disabled_checks.push(kind),
+            None => warnings.push(format!(
+                "unknown check \"{name}\" in the perf config's disabledChecks — valid checks are: {}",
+                PerfFindingKind::slug_list()
+            )),
+        }
+    }
+
+    disabled_checks.sort();
+    disabled_checks.dedup();
+
+    EffectivePerf {
+        exclude_tests: cli.exclude_tests
+            || config.and_then(|perf| perf.exclude_tests).unwrap_or(false),
+        disabled_checks,
+    }
 }
 
 /// Builds a `GlobSet` from config-relative `ignore` glob patterns, resolved
@@ -716,6 +787,76 @@ mod tests {
             merge_dupes(Some(&config), DupesOverrides::default()).mode,
             DupeMode::Semantic
         );
+    }
+
+    #[test]
+    fn merge_perf_ors_exclude_tests() {
+        let config = PerfConfig {
+            exclude_tests: Some(false),
+            ..Default::default()
+        };
+        let cli = PerfOverrides {
+            exclude_tests: true,
+        };
+        let mut warnings = Vec::new();
+
+        assert!(merge_perf(Some(&config), cli, &mut warnings).exclude_tests);
+
+        let config = PerfConfig {
+            exclude_tests: Some(true),
+            ..Default::default()
+        };
+
+        assert!(merge_perf(Some(&config), PerfOverrides::default(), &mut warnings).exclude_tests);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn merge_perf_defaults_to_every_check_enabled() {
+        let mut warnings = Vec::new();
+
+        assert_eq!(
+            merge_perf(None, PerfOverrides::default(), &mut warnings),
+            EffectivePerf::default()
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn disabled_checks_are_parsed_sorted_and_deduplicated() {
+        let config = PerfConfig {
+            disabled_checks: Some(vec![
+                "unstable-clock".to_string(),
+                "await-in-loop".to_string(),
+                "unstable-clock".to_string(),
+            ]),
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+
+        assert_eq!(
+            merge_perf(Some(&config), PerfOverrides::default(), &mut warnings).disabled_checks,
+            vec![PerfFindingKind::AwaitInLoop, PerfFindingKind::UnstableClock]
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_disabled_check_warns_and_names_the_valid_ones() {
+        // The failure mode this guards against is silent: the user believes a
+        // check is off, and it is still failing their build.
+        let config = PerfConfig {
+            disabled_checks: Some(vec!["list-lookups".to_string()]),
+            ..Default::default()
+        };
+        let mut warnings = Vec::new();
+        let effective = merge_perf(Some(&config), PerfOverrides::default(), &mut warnings);
+
+        assert!(effective.disabled_checks.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("list-lookups"));
+        assert!(warnings[0].contains("list-lookup-in-loop"));
+        assert!(warnings[0].contains("disabledChecks"));
     }
 
     #[test]

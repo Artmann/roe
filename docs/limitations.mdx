@@ -37,6 +37,18 @@ but it comes with known blind spots:
 - **`roe health --hotspots` needs git history** — it's the only part of roe
   that reads a repository, and a shallow clone yields correspondingly
   shallow churn.
+- **`roe perf` ranks by loop depth within a single method** — a method that
+  is cheap on its own but called from inside three loops elsewhere is not yet
+  ranked as hot.
+- **`roe perf` cannot see lazy-loaded EF navigation properties** —
+  `foreach (var order in orders) total += order.Lines.Sum(…)` fires a query
+  per order, but there's no method name to match on and whether the property
+  is lazy depends on configuration roe never reads.
+- **`roe perf` has no type information**, so boxing, `Span<T>`
+  opportunities, missing `AsNoTracking`, collection capacity hints, and
+  `ConfigureAwait` are all out of reach. For the same reason its
+  declared-type checks stay silent on any name they haven't seen declared —
+  a false negative is the deliberate choice over a false positive.
 
 When a limitation produces a false positive, mark it with an
 [inline suppression](/suppressing-findings), an
