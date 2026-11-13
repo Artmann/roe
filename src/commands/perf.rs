@@ -138,7 +138,8 @@ fn collect_findings(
     let mut findings = Vec::new();
 
     for file_facts in facts {
-        if file_facts.is_generated || file_facts.perf.is_empty() {
+        // Extraction never scans a generated file, so its list is empty too.
+        if file_facts.perf.is_empty() {
             continue;
         }
 

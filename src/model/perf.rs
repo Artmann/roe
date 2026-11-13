@@ -56,14 +56,6 @@ impl Cost {
             Cost::Severe => 100.0,
         }
     }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Cost::Moderate => "moderate",
-            Cost::High => "high",
-            Cost::Severe => "severe",
-        }
-    }
 }
 
 /// How sure roe is that a finding is real.
@@ -397,6 +389,17 @@ mod tests {
         let moderate = finding(PerfFindingKind::UnstableClock, 1);
 
         assert!(severe.score() > moderate.score());
+    }
+
+    #[test]
+    fn an_empty_result_has_no_findings() {
+        let result = PerfResult {
+            findings: Vec::new(),
+            summary: PerfSummary::default(),
+        };
+
+        assert!(!result.has_findings());
+        assert!(!result.has_gating_findings());
     }
 
     #[test]
