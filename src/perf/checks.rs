@@ -335,11 +335,11 @@ fn sync_over_async_result(node: Node, context: &Context) -> Option<Match> {
         return None;
     }
 
-    // `x.Result()` is a method called `Result`, not the Task property.
-    let is_called = node.parent().is_some_and(|parent| {
-        parent.kind() == "invocation_expression"
-            && parent.child_by_field_name("function") == Some(node)
-    });
+    // `x.Result()` is a method called `Result`, not the Task property. Only an
+    // invocation has a `function` field, so this is the whole test.
+    let is_called = node
+        .parent()
+        .is_some_and(|parent| parent.child_by_field_name("function") == Some(node));
 
     if is_called {
         return None;
@@ -798,6 +798,13 @@ mod tests {
         assert!(kinds("var value = handle.GetResult();").is_empty());
     }
 
+    #[test]
+    fn waiting_with_a_timeout_is_not_reported() {
+        // `Wait(timeout)` returns a bool the caller is deciding on; it is a
+        // deliberate bounded wait, not an accidental block.
+        assert!(kinds("var done = Fetch().Wait(TimeSpan.FromSeconds(1));").is_empty());
+    }
+
     // ---- the database checks
 
     #[test]
@@ -893,6 +900,94 @@ mod tests {
         assert!(kinds("await _db.SaveChangesAsync();").is_empty());
     }
 
+    #[test]
+    fn a_for_loop_counter_is_a_loop_variable() {
+        assert_eq!(
+            kinds(
+                "for (var index = 0; index < count; index++)\n\
+                 {\n\
+                     var row = await _db.Rows.FirstOrDefaultAsync(r => r.Index == index);\n\
+                 }"
+            ),
+            vec![PerfFindingKind::NPlusOneQuery]
+        );
+    }
+
+    #[test]
+    fn a_query_expression_range_is_a_loop_variable() {
+        assert_eq!(
+            sync_kinds(
+                "var customers = from order in orders\n\
+                 select _db.Customers.FirstOrDefaultAsync(c => c.Id == order.CustomerId);"
+            ),
+            vec![PerfFindingKind::NPlusOneQuery]
+        );
+    }
+
+    #[test]
+    fn a_linq_lambda_parameter_is_a_loop_variable() {
+        assert_eq!(
+            sync_kinds(
+                "var customers = orders.Select(order => \
+                 _db.Customers.FirstOrDefaultAsync(c => c.Id == order.CustomerId));"
+            ),
+            vec![PerfFindingKind::NPlusOneQuery]
+        );
+        assert_eq!(
+            sync_kinds(
+                "var customers = orders.Select((order, index) => \
+                 _db.Customers.FirstOrDefaultAsync(c => c.Id == order.CustomerId));"
+            ),
+            vec![PerfFindingKind::NPlusOneQuery]
+        );
+    }
+
+    #[test]
+    fn a_loop_variable_goes_out_of_scope_with_its_loop() {
+        // A later loop that happens to mention the same name is not iterating
+        // over it.
+        assert_eq!(
+            kinds(
+                "foreach (var order in orders)\n\
+                 {\n\
+                     Handle(order);\n\
+                 }\n\
+                 while (more)\n\
+                 {\n\
+                     var settings = await _db.Settings.FirstOrDefaultAsync(s => s.Id == order);\n\
+                 }"
+            ),
+            vec![PerfFindingKind::LoopInvariantQuery]
+        );
+    }
+
+    #[test]
+    fn a_lambda_parameter_goes_out_of_scope_with_its_lambda() {
+        assert_eq!(
+            kinds(
+                "var ids = orders.Select(order => order.Id);\n\
+                 while (more)\n\
+                 {\n\
+                     var settings = await _db.Settings.FirstOrDefaultAsync(s => s.Id == order);\n\
+                 }"
+            ),
+            vec![PerfFindingKind::LoopInvariantQuery]
+        );
+    }
+
+    #[test]
+    fn a_generic_database_call_is_still_a_database_call() {
+        assert_eq!(
+            kinds(
+                "foreach (var order in orders)\n\
+                 {\n\
+                     var customer = await _db.Customers.FirstOrDefaultAsync<Customer>(c => c.Id == order.CustomerId);\n\
+                 }"
+            ),
+            vec![PerfFindingKind::NPlusOneQuery]
+        );
+    }
+
     // ---- transient-http-client
 
     #[test]
@@ -914,6 +1009,21 @@ mod tests {
                  }"
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_client_built_inside_a_field_initializers_lambda_is_per_call() {
+        // The field holds the factory, not the client, so every call still
+        // constructs a new one.
+        assert_eq!(
+            found(
+                "class Sample\n\
+                 {\n\
+                     private readonly Func<HttpClient> _factory = () => { return new HttpClient(); };\n\
+                 }"
+            ),
+            vec![PerfFindingKind::TransientHttpClient]
         );
     }
 
@@ -984,6 +1094,27 @@ mod tests {
         assert!(sync_kinds("Thread.Sleep(500);").is_empty());
     }
 
+    #[test]
+    fn sleeping_in_an_async_local_function_is_reported() {
+        assert_eq!(
+            sync_kinds("async Task Inner()\n{\n    Thread.Sleep(500);\n}"),
+            vec![PerfFindingKind::BlockingSleepInAsync]
+        );
+    }
+
+    #[test]
+    fn sleeping_in_a_synchronous_local_function_is_not() {
+        assert!(kinds("void Inner()\n{\n    Thread.Sleep(500);\n}").is_empty());
+    }
+
+    #[test]
+    fn a_modifier_other_than_async_does_not_make_a_method_async() {
+        assert!(
+            found("class Sample\n{\n    private static void Run()\n    {\n        Thread.Sleep(500);\n    }\n}\n")
+                .is_empty()
+        );
+    }
+
     // ---- case-insensitive-compare
 
     #[test]
@@ -1005,6 +1136,13 @@ mod tests {
     #[test]
     fn folding_one_side_against_an_unknown_expression_is_not_reported() {
         assert!(sync_kinds("if (name.ToLower() == other) { }").is_empty());
+    }
+
+    #[test]
+    fn folding_with_a_culture_is_not_reported() {
+        // The culture-aware overload is a different question from an ordinal
+        // ignore-case compare, and the suggested fix would change behaviour.
+        assert!(sync_kinds("if (left.ToLower(culture) == right.ToLower(culture)) { }").is_empty());
     }
 
     // ---- list-lookup-in-loop
@@ -1174,6 +1312,50 @@ mod tests {
         assert!(sync_kinds("var total = orders.Count();").is_empty());
     }
 
+    #[test]
+    fn comparing_a_count_to_zero_for_equality_is_reported() {
+        assert_eq!(
+            sync_kinds("if (orders.Count() == 0) { }"),
+            vec![PerfFindingKind::RedundantLinq]
+        );
+    }
+
+    #[test]
+    fn only_a_parameterless_count_against_zero_is_redundant() {
+        assert!(sync_kinds("if (orders.Count(o => o.IsOpen) > 0) { }").is_empty());
+        assert!(sync_kinds("if (orders.Sum() > 0) { }").is_empty());
+        assert!(sync_kinds("if (orders.Count() < 0) { }").is_empty());
+    }
+
+    #[test]
+    fn sorting_suggests_the_matching_single_pass_operator() {
+        let fix_for = |body: &str| {
+            let source = format!("class Sample\n{{\n    void Run()\n    {{\n{body}\n    }}\n}}\n");
+
+            scan(&source)
+                .into_iter()
+                .map(|found| found.fix)
+                .next()
+                .unwrap_or_else(|| panic!("no finding in:\n{body}"))
+        };
+
+        assert!(fix_for("var low = orders.OrderBy(o => o.Total).First();").contains("MinBy"));
+        assert!(
+            fix_for("var high = orders.OrderByDescending(o => o.Total).First();").contains("MaxBy")
+        );
+    }
+
+    #[test]
+    fn chains_that_cannot_be_folded_are_not_redundant() {
+        assert!(sync_kinds("var ids = orders.Where(o => o.IsOpen).Select(o => o.Id);").is_empty());
+        assert!(sync_kinds("var first = orders.Select(o => o.Id).First();").is_empty());
+        assert!(
+            sync_kinds("var first = orders.Where(o => o.IsOpen).First(o => o.IsNew);").is_empty()
+        );
+        assert!(sync_kinds("var sorted = orders.OrderBy(o => o.Total).ToList();").is_empty());
+        assert!(sync_kinds("var open = orders.AsEnumerable().Where(o => o.IsOpen);").is_empty());
+    }
+
     // ---- unstable-clock
 
     #[test]
@@ -1293,6 +1475,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_for_loop_counts_its_body() {
+        assert_eq!(
+            depth(
+                "for (var index = 0; index < count; index++)\n{\n    var stamp = DateTime.Now;\n}",
+                PerfFindingKind::UnstableClock
+            ),
+            1
+        );
+    }
+
     // ---- attribution
 
     #[test]
@@ -1329,6 +1522,15 @@ mod tests {
         assert_eq!(findings.len(), 2);
         assert_eq!(findings[0].loop_depth, 1);
         assert_eq!(findings[1].loop_depth, 0);
+    }
+
+    #[test]
+    fn a_finding_in_a_field_initializer_belongs_to_the_field() {
+        let source = "class Sample\n{\n    private DateTime stamp = DateTime.Now;\n}\n";
+        let findings = scan(source);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].member, Some((3, 22)));
     }
 
     #[test]

@@ -365,6 +365,232 @@ fn one_sync_over_async_turns_the_same_project_red() {
     assert!(stdout.contains("1 gating"), "got:\n{stdout}");
 }
 
+#[test]
+fn human_output_does_not_open_with_a_blank_line() {
+    // The blank line separates findings; it does not lead the report.
+    let output = roe()
+        .args(["perf", &fixture("perf_catalog").display().to_string()])
+        .output()
+        .expect("command runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(!stdout.starts_with('\n'), "got:\n{stdout}");
+}
+
+#[test]
+fn a_test_project_is_scanned_unless_excluded() {
+    let root = with_test_project("test_project_settings");
+
+    let included = analyze(&root, &Settings::default()).expect("analysis should succeed");
+    let summary = &included.result.summary;
+
+    assert!(
+        included
+            .result
+            .findings
+            .iter()
+            .any(|finding| file_name(finding) == "ClockTests.cs"),
+        "a test project is scanned by default"
+    );
+    assert_eq!((summary.projects, summary.files_scanned), (2, 2));
+    assert!(summary.excluded_test_projects.is_empty());
+
+    let settings = Settings {
+        exclude_tests: true,
+        ..Settings::default()
+    };
+    let excluded = analyze(&root, &settings).expect("analysis should succeed");
+    let summary = &excluded.result.summary;
+
+    assert!(
+        excluded
+            .result
+            .findings
+            .iter()
+            .all(|finding| file_name(finding) != "ClockTests.cs"),
+        "an excluded test project must produce nothing"
+    );
+    assert_eq!((summary.projects, summary.files_scanned), (1, 1));
+    assert_eq!(summary.excluded_test_projects, vec!["Advice.Tests"]);
+    assert_eq!(summary.excluded_files, 0);
+}
+
+#[test]
+fn excluded_test_projects_are_named_in_both_reports() {
+    let root = with_test_project("test_project_reports");
+
+    let human = roe()
+        .args(["perf", &root.display().to_string(), "--exclude-tests"])
+        .output()
+        .expect("command runs");
+    let stdout = String::from_utf8_lossy(&human.stdout);
+
+    assert!(
+        stdout.contains("excluded: 1 test project (Advice.Tests)"),
+        "got:\n{stdout}"
+    );
+
+    let json = roe()
+        .args([
+            "perf",
+            &root.display().to_string(),
+            "--exclude-tests",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("command runs");
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).expect("valid JSON");
+    let excluded = &parsed["summary"]["excluded"];
+
+    assert_eq!(
+        excluded["testProjects"],
+        serde_json::json!(["Advice.Tests"])
+    );
+    assert_eq!(excluded["ignoredFiles"], 0);
+}
+
+#[test]
+fn a_config_ignore_drops_the_file_and_says_so() {
+    let root = copy_fixture("perf_medium_only", "config_ignore");
+    std::fs::write(
+        root.join("roe.json"),
+        r#"{ "perf": { "ignore": ["Advice/Reporter.cs"] } }"#,
+    )
+    .expect("the scratch fixture is writable");
+
+    let human = roe()
+        .args(["perf", &root.display().to_string()])
+        .output()
+        .expect("command runs");
+    let stdout = String::from_utf8_lossy(&human.stdout);
+
+    assert_eq!(human.status.code(), Some(0));
+    assert!(stdout.contains("no quick wins found"), "got:\n{stdout}");
+    assert!(stdout.contains("0 file(s) scanned"), "got:\n{stdout}");
+    assert!(
+        stdout.contains("excluded: 1 ignored file"),
+        "got:\n{stdout}"
+    );
+
+    let json = roe()
+        .args(["perf", &root.display().to_string(), "--format", "json"])
+        .output()
+        .expect("command runs");
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).expect("valid JSON");
+
+    assert_eq!(parsed["findings"], serde_json::json!([]));
+    assert_eq!(parsed["summary"]["excluded"]["ignoredFiles"], 1);
+}
+
+#[test]
+fn a_check_disabled_in_the_config_is_off_and_named() {
+    let root = copy_fixture("perf_medium_only", "config_disabled");
+    std::fs::write(
+        root.join("roe.json"),
+        r#"{ "perf": { "disabledChecks": ["unstable-clock"] } }"#,
+    )
+    .expect("the scratch fixture is writable");
+
+    let output = roe()
+        .args(["perf", &root.display().to_string()])
+        .output()
+        .expect("command runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(!stdout.contains("DateTime.Now"), "got:\n{stdout}");
+    assert!(
+        stdout.contains("disabled: unstable-clock"),
+        "got:\n{stdout}"
+    );
+}
+
+#[test]
+fn an_inline_marker_suppresses_only_the_check_it_names() {
+    let root = copy_fixture("perf_medium_only", "inline_marker");
+    std::fs::write(
+        root.join("Advice/Clock.cs"),
+        "using System;\n\
+         \n\
+         namespace Advice;\n\
+         \n\
+         public class Clock\n\
+         {\n\
+             public DateTime Quiet()\n\
+             {\n\
+                 return DateTime.Now; // roe-ignore-line unstable-clock\n\
+             }\n\
+         \n\
+             public DateTime Loud()\n\
+             {\n\
+                 // roe-ignore-next-line not-a-check\n\
+                 return DateTime.Now;\n\
+             }\n\
+         }\n",
+    )
+    .expect("the scratch fixture is writable");
+
+    let analysis = analyze(&root, &Settings::default()).expect("analysis should succeed");
+    let members: Vec<&str> = analysis
+        .result
+        .findings
+        .iter()
+        .filter(|finding| file_name(finding) == "Clock.cs")
+        .map(|finding| finding.member.as_str())
+        .collect();
+
+    assert_eq!(members, vec!["Advice.Clock.Loud"]);
+
+    let warning = analysis
+        .workspace
+        .warnings
+        .iter()
+        .find(|warning| warning.contains("not-a-check"))
+        .expect("an unknown rule is warned about");
+
+    assert!(
+        warning.contains("unstable-clock"),
+        "the warning lists the valid rules, got: {warning}"
+    );
+}
+
+/// `perf_medium_only` plus an xunit project holding one finding of its own.
+fn with_test_project(into: &str) -> PathBuf {
+    let root = copy_fixture("perf_medium_only", into);
+    let tests = root.join("Advice.Tests");
+
+    std::fs::create_dir_all(&tests).expect("the scratch fixture is writable");
+    std::fs::write(
+        tests.join("Advice.Tests.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\">\n\
+         \x20 <PropertyGroup>\n\
+         \x20   <TargetFramework>net8.0</TargetFramework>\n\
+         \x20 </PropertyGroup>\n\
+         \x20 <ItemGroup>\n\
+         \x20   <PackageReference Include=\"xunit\" Version=\"2.9.0\" />\n\
+         \x20 </ItemGroup>\n\
+         </Project>\n",
+    )
+    .expect("the scratch fixture is writable");
+    std::fs::write(
+        tests.join("ClockTests.cs"),
+        "using System;\n\
+         \n\
+         namespace Advice.Tests;\n\
+         \n\
+         public class ClockTests\n\
+         {\n\
+             public void Stamps()\n\
+             {\n\
+                 var stamp = DateTime.Now;\n\
+             }\n\
+         }\n",
+    )
+    .expect("the scratch fixture is writable");
+
+    root
+}
+
 /// A writable copy of a fixture, for the tests that need to add a file to one.
 /// `CARGO_TARGET_TMPDIR` is per-crate and cleaned by `cargo clean`, so nothing
 /// leaks back into `tests/fixtures`.

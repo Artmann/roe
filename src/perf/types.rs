@@ -278,7 +278,6 @@ impl DeclaredTypes {
 
         let declared = declaration.child_by_field_name("type");
         let is_inferred = declared.is_some_and(|node| node.kind() == "implicit_type");
-        let annotation = declared.filter(|_| !is_inferred);
 
         let mut cursor = declaration.walk();
         for declarator in declaration
@@ -292,12 +291,12 @@ impl DeclaredTypes {
             // An annotation is authoritative. `var` falls back to what the
             // initializer constructs, and only when it constructs something
             // directly — `var x = Build();` stays unknown.
-            let classified = match annotation {
-                Some(annotation) => classify(annotation, source),
-                None if is_inferred => declarator
+            let classified = if is_inferred {
+                declarator
                     .named_child(1)
-                    .and_then(|initializer| classify_initializer(initializer, source)),
-                None => None,
+                    .and_then(|initializer| classify_initializer(initializer, source))
+            } else {
+                declared.and_then(|annotation| classify(annotation, source))
             };
 
             self.insert(scope, text(name, source), classified);
