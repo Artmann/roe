@@ -28,7 +28,7 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
 
   resolve-release:
@@ -64,7 +64,7 @@ jobs:
     if: always() && needs.resolve-release.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve-release.outputs.tag_name }}
 
@@ -99,7 +99,7 @@ jobs:
             runner: ubuntu-22.04
             binary: roe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve-release.outputs.tag_name }}
 
@@ -137,7 +137,7 @@ jobs:
           Compress-Archive -Path $staging -DestinationPath "$staging.zip"
 
       - name: Upload archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: archive-${{ matrix.target }}
           path: |
@@ -146,7 +146,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload raw binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
@@ -160,7 +160,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: archive-*
           merge-multiple: true
@@ -188,11 +188,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve-release.outputs.tag_name }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -200,7 +200,7 @@ jobs:
       - name: Update npm
         run: npm install --global npm@latest
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: bin-*
           path: binaries
@@ -226,15 +226,15 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve-release.outputs.tag_name }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: bin-*
           path: binaries
